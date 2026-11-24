@@ -40,8 +40,6 @@ x-chat serve -addr 0.0.0.0:4310 -token '<your-token>'  # listen on the LAN
 x-chat serve -no-auth                                 # local development
 ```
 
-The built-in **Demo Agent** lets you try streaming responses, plans, tool calls, diffs, and permission requests without installing a coding agent. `pnpm dev` enables it by default. You can also set `X_CHAT_DEMO=1` or run `pnpm serve -demo`.
-
 ## Architecture
 
 The Go host runs the desktop window, manages sessions and storage, and starts the Node.js sidecar. The sidecar bundles [acp-hub](https://github.com/CarlOpenLab/acp-hub) into a single `.mjs` file embedded in the binary. At runtime the host extracts it to the cache directory and exchanges NDJSON with it over stdio. The sidecar handles ACP handshakes, session events, and permission requests, and shares one child process per agent across conversations.
@@ -76,7 +74,7 @@ For browser-only development, run `pnpm dev:web` and start `go run . serve -no-a
 
 ```bash
 pnpm typecheck
-go test ./...                      # includes Node.js + sidecar + Demo Agent
+go test ./...                      # includes Node.js sidecar catalog integration
 pnpm build:web && go build ./...   # build the embedded UI and compile Go packages
 pnpm build                        # package installers under build/<os>-<arch>/
 ```
@@ -86,7 +84,6 @@ pnpm build                        # package installers under build/<os>-<arch>/
 | `main.go` | Entry point for `x-chat` and `x-chat serve` |
 | `internal/host/` | Sessions, persistence, sidecar lifecycle, Host API, and HTTP service |
 | `sidecar/src/main.ts` | ACP integration through acp-hub |
-| `sidecar/src/demo-agent.ts` | Built-in ACP Demo Agent |
 | `web/src/` | Vue frontend built with Antdv Next and Antdv X |
 | `internal/webdist/` | Embedded frontend build |
 

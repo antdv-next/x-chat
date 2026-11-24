@@ -19,7 +19,6 @@ export interface AgentInfo {
   /** Resolved is where it was found. */
   resolved?: string;
   custom?: boolean;
-  demo?: boolean;
   disabled?: boolean;
 }
 

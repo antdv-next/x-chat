@@ -11,6 +11,24 @@
   box-shadow: var(--shadow-pop) !important;
 }
 
+.xc-avatar-dropdown .ant-dropdown-menu {
+  --avatar-menu-radius: 16px;
+  --avatar-menu-padding: 4px;
+  border-radius: var(--avatar-menu-radius);
+  padding: var(--avatar-menu-padding);
+}
+
+.xc-avatar-dropdown .ant-dropdown-menu .ant-dropdown-menu-item {
+  border-radius: calc(var(--avatar-menu-radius) - var(--avatar-menu-padding) - 1px);
+}
+
+.xc-avatar-dropdown .ant-dropdown-menu .ant-dropdown-menu-title-content .ant-dropdown-menu-item-extra {
+  display: flex;
+  align-items: center;
+  margin-inline-start: 0;
+  padding-inline-start: 6px;
+}
+
 /* Harmonize @antdv-next/x-pro MessageScroller preview & back-to-bottom button with Beacon Acrylic */
 .ant-message-scroller-preview,
 .ant-message-scroller-back-to-bottom-button {

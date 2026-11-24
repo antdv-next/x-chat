@@ -23,7 +23,7 @@ x-chat v2：Go（mygo）+ Vue + antdv-next 的桌面 agent 工作台，agent 全
 ## 检查
 
 ```bash
-go test ./...                     # 含一次真实 end-to-end（node + sidecar + demo agent）
+go test ./...                     # 含 Node.js sidecar 的 Agent 目录集成测试
 pnpm typecheck                    # vue-tsc
 pnpm build:web && go build ./...  # 产物能编译
 ```

@@ -40,8 +40,6 @@ x-chat serve -addr 0.0.0.0:4310 -token '<your-token>'  # 允许局域网访问
 x-chat serve -no-auth                                 # 用于本地开发
 ```
 
-内置的 **Demo Agent** 可以演示流式回复、计划、工具调用、差异和权限请求。`pnpm dev` 默认启用它，也可设置 `X_CHAT_DEMO=1` 或运行 `pnpm serve -demo`。
-
 ## 架构
 
 Go 宿主负责桌面窗口、会话、数据存储和 Node.js sidecar 的生命周期。sidecar 将 [acp-hub](https://github.com/CarlOpenLab/acp-hub) 打包为一个嵌入二进制的 `.mjs` 文件。运行时，宿主将该文件释放到缓存目录，通过标准输入输出交换 NDJSON。ACP 握手、会话事件和权限请求由 sidecar 处理，同一 Agent 的多个会话共享一个子进程。
@@ -76,7 +74,7 @@ pnpm dev                           # 桌面窗口 + Vite（5173 端口）
 
 ```bash
 pnpm typecheck
-go test ./...                      # 包含 Node.js + sidecar + Demo Agent 端到端测试
+go test ./...                      # 包含 Node.js sidecar 的 Agent 目录集成测试
 pnpm build:web && go build ./...   # 构建嵌入式前端并编译 Go 包
 pnpm build                        # 安装包输出到 build/<os>-<arch>/
 ```
@@ -86,7 +84,6 @@ pnpm build                        # 安装包输出到 build/<os>-<arch>/
 | `main.go` | `x-chat` 和 `x-chat serve` 的入口 |
 | `internal/host/` | 会话、存储、sidecar 生命周期、Host API 和 HTTP 服务 |
 | `sidecar/src/main.ts` | 通过 acp-hub 接入 ACP |
-| `sidecar/src/demo-agent.ts` | 内置的 ACP Demo Agent |
 | `web/src/` | 使用 Antdv Next 和 Antdv X 的 Vue 前端 |
 | `internal/webdist/` | 嵌入二进制的前端构建产物 |
 
