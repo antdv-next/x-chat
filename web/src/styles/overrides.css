@@ -277,7 +277,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.xc-convs .antd-conversations-menu-icon {
+.xc-sidebar .xc-convs .antd-conversations-item .antd-conversations-menu-icon {
   position: absolute;
   right: 8px;
   top: 50%;
@@ -294,14 +294,14 @@
   color: var(--text-3);
   transition: opacity 0.14s var(--ease), color 0.14s var(--ease), background 0.14s var(--ease);
 }
-.xc-convs .antd-conversations-item:hover .antd-conversations-menu-icon,
-.xc-convs .antd-conversations-item:has(.ant-dropdown-open) .antd-conversations-menu-icon,
-.xc-convs .antd-conversations-menu-icon.ant-dropdown-open {
+.xc-sidebar .xc-convs .antd-conversations-item:hover .antd-conversations-menu-icon,
+.xc-sidebar .xc-convs .antd-conversations-item:has(.ant-dropdown-open) .antd-conversations-menu-icon,
+.xc-sidebar .xc-convs .antd-conversations-item .antd-conversations-menu-icon.ant-dropdown-open {
   opacity: 1;
   pointer-events: auto;
 }
-.xc-convs .antd-conversations-menu-icon:hover,
-.xc-convs .antd-conversations-menu-icon.ant-dropdown-open {
+.xc-sidebar .xc-convs .antd-conversations-item .antd-conversations-menu-icon:hover,
+.xc-sidebar .xc-convs .antd-conversations-item .antd-conversations-menu-icon.ant-dropdown-open {
   background: var(--active);
   color: var(--text);
 }
