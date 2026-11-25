@@ -74,7 +74,7 @@ func TestSidecarAgentCatalog(t *testing.T) {
 	for _, agent := range NewAPI(h).Agents() {
 		agentIDs = append(agentIDs, agent.ID)
 	}
-	want := []string{"claude-code", "codex", "oh-my-pi", "pi", "dsh"}
+	want := []string{"claude-code", "codex", "codebuddy", "qoder", "oh-my-pi", "pi", "dsh"}
 	if !slices.Equal(agentIDs, want) {
 		t.Fatalf("agent IDs = %v, want %v", agentIDs, want)
 	}
@@ -125,5 +125,48 @@ func TestArchivePersistsAcrossRestart(t *testing.T) {
 	got3, ok := st3.meta("c1")
 	if !ok || got3.Archived {
 		t.Fatalf("expected unarchived state to persist, got ok=%v meta=%+v", ok, got3)
+	}
+}
+
+func TestCodeBuddyEnvCompatibility(t *testing.T) {
+	if !shouldImportLoginEnv("CODEBUDDY_INTERNET_ENVIRONMENT") {
+		t.Fatalf("expected CODEBUDDY_INTERNET_ENVIRONMENT to be imported from login shell")
+	}
+	if !shouldImportLoginEnv("CODEBUDDY_API_KEY") || !shouldImportLoginEnv("CODEBUDDY_CONFIG_DIR") {
+		t.Fatalf("expected CODEBUDDY_* variables to be imported from login shell")
+	}
+	if shouldImportLoginEnv("RANDOM_UNRELATED_VAR") {
+		t.Fatalf("unexpectedly imported unrelated variable")
+	}
+
+	h := &Host{
+		envLoaded: true,
+		env: []string{
+			"PATH=/usr/bin",
+			"CODEBUDDY_INTERNET_ENVIRONMENT=internal",
+			"CODEBUDDY_API_KEY=secret",
+		},
+	}
+
+	// Default ("auto"): inherits CODEBUDDY_* from host environment.
+	gotAuto := h.effectiveAgentEnv(AgentInfo{ID: "codebuddy"})
+	if gotAuto["CODEBUDDY_INTERNET_ENVIRONMENT"] != "internal" || gotAuto["CODEBUDDY_API_KEY"] != "secret" {
+		t.Fatalf("auto env = %#v, want internal + secret", gotAuto)
+	}
+
+	// Explicit international override (""): overrides shell "internal".
+	gotIntl := h.effectiveAgentEnv(AgentInfo{
+		ID:  "codebuddy",
+		Env: map[string]string{"CODEBUDDY_INTERNET_ENVIRONMENT": ""},
+	})
+	if v, ok := gotIntl["CODEBUDDY_INTERNET_ENVIRONMENT"]; !ok || v != "" {
+		t.Fatalf("intl env = %#v, want explicit empty override", gotIntl)
+	}
+
+	// When shell has no CODEBUDDY_INTERNET_ENVIRONMENT, keeps it unset ("" -> sidecar unsets) to match CLI.
+	hNoRegion := &Host{envLoaded: true, env: []string{"PATH=/usr/bin"}}
+	gotUnset := hNoRegion.effectiveAgentEnv(AgentInfo{ID: "codebuddy"})
+	if v, ok := gotUnset["CODEBUDDY_INTERNET_ENVIRONMENT"]; !ok || v != "" {
+		t.Fatalf("unset env = %#v, want explicit empty unset signal", gotUnset)
 	}
 }

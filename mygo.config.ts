@@ -10,7 +10,7 @@ export default defineConfig({
   license: "MIT",
   icon: "resources/icon.png",
 
-  devUrl: "http://127.0.0.1:5173",
+  devUrl: "http://127.0.0.1:5183",
   devCommand: "pnpm dev:web",
   buildCommand: "pnpm build:web",
   // The frontend is embedded by internal/webdist (go:embed) so that the

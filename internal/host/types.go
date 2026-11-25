@@ -80,7 +80,12 @@ type Meta struct {
 	Archived    bool   `json:"archived,omitempty"`
 	// AcpSessionID is the agent's own session id, to resume with session/load.
 	AcpSessionID string `json:"acpSessionId,omitempty"`
-	Preview      string `json:"preview,omitempty"`
+	// ModelConfigID/ModelValue remember the model picked for this conversation.
+	// ACP keeps the choice only in the live session, so it must be re-applied
+	// whenever the session is opened fresh (restart, failed resume, new session).
+	ModelConfigID string `json:"modelConfigId,omitempty"`
+	ModelValue    string `json:"modelValue,omitempty"`
+	Preview       string `json:"preview,omitempty"`
 	// Status is live state, not stored: idle | connecting | ready | running | error.
 	Status string `json:"status"`
 	// Pending is how many permission requests wait on the user.

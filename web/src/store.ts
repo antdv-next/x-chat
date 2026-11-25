@@ -37,6 +37,8 @@ export const store = reactive({
   queues: {} as Record<string, QueuedMessage[]>,
   /** The open conversation; null shows the new-conversation screen. */
   activeId: null as string | null,
+  /** Working directory currently shown in the UI; new conversations start here. */
+  currentCwd: localStorage.getItem("x-chat.cwd") || "",
   loading: {} as Record<string, boolean>,
   sidebarCollapsed: localStorage.getItem("x-chat.sidebar") === "0",
   workspaceOpen: false,
@@ -136,6 +138,13 @@ watch(
 watch(
   () => store.workspaceWidth,
   (v) => localStorage.setItem("x-chat.workspaceWidth", String(Math.round(v))),
+);
+watch(
+  () => store.currentCwd,
+  (v) => {
+    if (v) localStorage.setItem("x-chat.cwd", v);
+    else localStorage.removeItem("x-chat.cwd");
+  },
 );
 
 function normalizeSlashPath(p: string): string {
@@ -315,10 +324,10 @@ function onPush(p: Push) {
           notifyNeedYou(notifyCtxFor(p.conversationId), detail);
         } else if (ev.type === "turn_end") {
           const reason = String((ev as { stopReason?: string }).stopReason ?? "");
-          if (reason === "error" || reason === "max_tokens") {
+          const errMsg =
+            (ev as { error?: string }).error || (reason === "max_tokens" ? "回答超长被截断" : undefined);
+          if (reason === "error" || reason === "max_tokens" || reason === "refusal" || Boolean(errMsg)) {
             store.turnOutcome[p.conversationId] = "error";
-            const errMsg =
-              (ev as { error?: string }).error || (reason === "max_tokens" ? "回答超长被截断" : undefined);
             notifyTurnDone(notifyCtxFor(p.conversationId), "error", errMsg);
           } else if (reason === "end_turn") {
             store.turnOutcome[p.conversationId] = store.activeId === p.conversationId ? "done" : "unseen";
@@ -461,6 +470,21 @@ export async function refreshModels(agentId: string, cwd = "") {
   try {
     const opts = await api.refreshModels(agentId, cwd || store.boot?.home || "");
     captureModels(agentId, opts);
+    // Also update the active conversation's live model option so refreshing inside an existing chat takes effect immediately.
+    const freshModel = store.cachedModels[agentId];
+    const activeId = store.activeId;
+    if (freshModel && activeId && store.metas[activeId]?.agentId === agentId && store.lives[activeId]) {
+      const liveOpts = store.lives[activeId].configOptions ?? [];
+      const idx = liveOpts.findIndex(
+        (o) => o.id === freshModel.id || o.category === "model" || (o.type === "select" && o.id.includes("model")),
+      );
+      if (idx >= 0) {
+        const prevVal = liveOpts[idx].currentValue;
+        liveOpts[idx] = { ...freshModel, currentValue: prevVal ?? freshModel.currentValue };
+      } else {
+        store.lives[activeId].configOptions = [...liveOpts, { ...freshModel }];
+      }
+    }
   } finally {
     store.probingModels[agentId] = false;
   }
@@ -494,6 +518,8 @@ export async function select(id: string | null) {
     localStorage.removeItem("x-chat.active");
   }
   if (id && !store.transcripts[id]) await load(id);
+  const cwd = id ? store.metas[id]?.cwd : "";
+  if (cwd) store.currentCwd = cwd;
 }
 
 export function newConversation() {
@@ -707,6 +733,39 @@ export async function remove(id: string) {
 
 export async function saveSettings(patch: Partial<Settings>) {
   if (!store.settings) return;
+  const prevAgents = store.settings.agents ?? {};
   store.settings = await api.saveSettings({ ...store.settings, ...patch });
   await refreshAgents();
+  const nextAgents = store.settings.agents ?? {};
+  const ids = new Set([...Object.keys(prevAgents), ...Object.keys(nextAgents)]);
+  let cacheDirty = false;
+  const changed: string[] = [];
+  for (const id of ids) {
+    const a = prevAgents[id] ?? {};
+    const b = nextAgents[id] ?? {};
+    if (
+      (a.command ?? "") !== (b.command ?? "") ||
+      JSON.stringify(a.args ?? []) !== JSON.stringify(b.args ?? []) ||
+      JSON.stringify(a.env ?? {}) !== JSON.stringify(b.env ?? {})
+    ) {
+      if (id in store.cachedModels) {
+        delete store.cachedModels[id];
+        cacheDirty = true;
+      }
+      delete store.probeErrors[id];
+      changed.push(id);
+    }
+  }
+  if (cacheDirty) {
+    try {
+      localStorage.setItem("x-chat.agentModels", JSON.stringify(store.cachedModels));
+    } catch {
+      /* ignore quota errors */
+    }
+  }
+  for (const id of changed) {
+    if (agentById(id)?.available) {
+      void refreshModels(id).catch(() => {});
+    }
+  }
 }

@@ -185,7 +185,7 @@ func appMenu() *mygo.Menu {
 
 func serve(args []string) {
 	fl := flag.NewFlagSet("serve", flag.ExitOnError)
-	addr := fl.String("addr", "127.0.0.1:4310", "listen address")
+	addr := fl.String("addr", "127.0.0.1:4311", "listen address")
 	token := fl.String("token", os.Getenv("X_CHAT_TOKEN"), "access token (default: random; empty with -no-auth)")
 	noAuth := fl.Bool("no-auth", false, "serve without an access token (only on trusted networks)")
 	dist := fl.String("dist", "", "serve the frontend from this directory instead of the embedded one")

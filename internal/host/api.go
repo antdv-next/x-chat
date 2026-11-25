@@ -115,9 +115,10 @@ func (a *API) ProbeModels(ctx context.Context, agentID, cwd string) ([]any, erro
 }
 
 // RefreshModels re-reads configOptions from a freshly spawned agent process,
-// so models added outside (dsh profile, npm install, provider config) show up
-// without restarting x-chat.
+// so models added outside (dsh profile, npm install, provider config, or
+// CodeBuddy CN/intl environment changes) show up without restarting x-chat.
 func (a *API) RefreshModels(ctx context.Context, agentID, cwd string) ([]any, error) {
+	a.h.refreshEnv()
 	return a.h.probeAgent(context.WithoutCancel(ctx), agentID, cwd, true)
 }
 
@@ -177,7 +178,32 @@ func (a *API) SetMode(ctx context.Context, id, modeID string) error {
 
 // SetConfig changes a session config option, such as the model.
 func (a *API) SetConfig(ctx context.Context, id, configID string, value any) error {
-	return a.h.callLive(ctx, id, "setConfig", map[string]any{"configId": configID, "value": value})
+	if err := a.h.callLive(ctx, id, "setConfig", map[string]any{"configId": configID, "value": value}); err != nil {
+		return err
+	}
+	// ACP keeps config options in the session only. Remember the model choice
+	// on the conversation so open() can re-apply it after a restart or resume.
+	if chosen, ok := value.(string); ok && isModelConfigOption(configID, a.h.liveState(id).ConfigOptions) {
+		a.h.store.update(id, func(m *Meta) {
+			m.ModelConfigID = configID
+			m.ModelValue = chosen
+		})
+	}
+	return nil
+}
+
+func isModelConfigOption(configID string, options []any) bool {
+	for _, raw := range options {
+		opt, ok := raw.(map[string]any)
+		if !ok || opt["id"] != configID {
+			continue
+		}
+		if category, _ := opt["category"].(string); category == "model" {
+			return true
+		}
+		break
+	}
+	return strings.Contains(strings.ToLower(configID), "model")
 }
 
 // Rename sets a conversation's title; agents no longer retitle it.
@@ -326,7 +352,13 @@ func (a *API) openLocalLink(target string, u *url.URL, cwd string) error {
 		p = u.Path
 		if u.Scheme == "file" {
 			if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
-				p = "//" + u.Host + p
+				// On Windows, "file://C:/path" parses with Host="C:" and Path="/path".
+				// The drive letter is part of the path, not a UNC host.
+				if runtime.GOOS == "windows" && len(u.Host) == 2 && u.Host[1] == ':' {
+					p = u.Host + p
+				} else {
+					p = "//" + u.Host + p
+				}
 			}
 			if runtime.GOOS == "windows" && len(p) >= 3 && p[0] == '/' && p[2] == ':' {
 				p = p[1:]

@@ -21,11 +21,11 @@ export default defineConfig({
     },
   ],
   server: {
-    port: 5173,
+    port: 5183,
     strictPort: true,
     host: "127.0.0.1",
     // `pnpm dev:web` alone (no window): proxy the API to `x-chat serve -no-auth`.
-    proxy: { "/api": { target: "http://127.0.0.1:4310", changeOrigin: true } },
+    proxy: { "/api": { target: "http://127.0.0.1:4311", changeOrigin: true } },
   },
   build: {
     outDir,

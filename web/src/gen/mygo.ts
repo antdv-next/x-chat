@@ -196,6 +196,13 @@ export interface Meta {
   archived?: boolean;
   /** AcpSessionID is the agent's own session id, to resume with session/load. */
   acpSessionId?: string;
+  /**
+   * ModelConfigID/ModelValue remember the model picked for this conversation.
+   * ACP keeps the choice only in the live session, so it must be re-applied
+   * whenever the session is opened fresh (restart, failed resume, new session).
+   */
+  modelConfigId?: string;
+  modelValue?: string;
   preview?: string;
   /** Status is live state, not stored: idle | connecting | ready | running | error. */
   status: string;
@@ -353,8 +360,8 @@ export const Host = {
   probeModels: bind<[string, string], unknown[]>("Host.ProbeModels", (agentID: string, cwd: string) => [agentID, cwd]),
   /**
    * RefreshModels re-reads configOptions from a freshly spawned agent process,
-   * so models added outside (dsh profile, npm install, provider config) show up
-   * without restarting x-chat.
+   * so models added outside (dsh profile, npm install, provider config, or
+   * CodeBuddy CN/intl environment changes) show up without restarting x-chat.
    */
   refreshModels: bind<[string, string], unknown[]>("Host.RefreshModels", (agentID: string, cwd: string) => [agentID, cwd]),
   /** Rename sets a conversation's title; agents no longer retitle it. */

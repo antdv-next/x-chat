@@ -271,6 +271,48 @@ func (h *Host) agents() []AgentInfo {
 	return out
 }
 
+// effectiveAgentEnv builds the per-agent environment overrides sent to the
+// sidecar. For CodeBuddy, shell-level CODEBUDDY_* variables are mirrored from
+// the current host environment so x-chat matches the user's terminal CLI
+// without forcing a region override when unset; explicit settings overrides
+// still take precedence.
+func (h *Host) effectiveAgentEnv(a AgentInfo) map[string]string {
+	var out map[string]string
+	if a.ID == "codebuddy" {
+		hasShellRegion := false
+		for _, kv := range h.environ() {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok || !strings.HasPrefix(k, "CODEBUDDY_") {
+				continue
+			}
+			if k == "CODEBUDDY_INTERNET_ENVIRONMENT" && v != "" {
+				hasShellRegion = true
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+		// Keep unset state aligned with the shell (sidecar converts "" to
+		// undefined so spawn omits the variable rather than inheriting stale env).
+		if !hasShellRegion {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
+		}
+	}
+	if len(a.Env) > 0 {
+		if out == nil {
+			out = make(map[string]string, len(a.Env))
+		}
+		for k, v := range a.Env {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func (h *Host) agent(id string) (AgentInfo, bool) {
 	for _, a := range h.agents() {
 		if a.ID == id {
@@ -447,7 +489,7 @@ func (h *Host) open(ctx context.Context, m Meta) (LiveState, string, error) {
 	}
 	params := map[string]any{
 		"key":       m.ID,
-		"agent":     map[string]any{"id": a.ID, "command": a.Command, "args": a.Args, "env": a.Env},
+		"agent":     map[string]any{"id": a.ID, "command": a.Command, "args": a.Args, "env": h.effectiveAgentEnv(a)},
 		"cwd":       m.Cwd,
 		"autoAllow": h.getSettings().AutoAllow,
 	}
@@ -459,6 +501,23 @@ func (h *Host) open(ctx context.Context, m Meta) (LiveState, string, error) {
 	}
 	if res.ConfigOptions == nil {
 		res.ConfigOptions = []any{}
+	}
+	// A fresh (or re-created) ACP session starts with the agent's default
+	// model, and not every agent restores config options on session/load.
+	// Re-apply the model the user picked for this conversation.
+	if m.ModelConfigID != "" && m.ModelValue != "" {
+		if err := sc.call(ctx, "setConfig", map[string]any{
+			"key": m.ID, "configId": m.ModelConfigID, "value": m.ModelValue,
+		}, nil); err != nil {
+			logf("restore model for %s: %v", m.ID, err)
+		} else {
+			for _, raw := range res.ConfigOptions {
+				if opt, ok := raw.(map[string]any); ok && opt["id"] == m.ModelConfigID {
+					opt["currentValue"] = m.ModelValue
+					break
+				}
+			}
+		}
 	}
 	hadHistory := m.AcpSessionID != ""
 	// Only persist AcpSessionID when resuming an existing session; fresh
@@ -529,7 +588,7 @@ func (h *Host) probeAgent(ctx context.Context, agentID, cwd string, refresh bool
 		ConfigOptions []any `json:"configOptions"`
 	}
 	params := map[string]any{
-		"agent": map[string]any{"id": a.ID, "command": a.Command, "args": a.Args, "env": a.Env},
+		"agent": map[string]any{"id": a.ID, "command": a.Command, "args": a.Args, "env": h.effectiveAgentEnv(a)},
 		"cwd":   cwd,
 		// refresh makes the sidecar spawn a fresh agent process, so config
 		// changed outside (new models in dsh/magpie etc.) is picked up.
