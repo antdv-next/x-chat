@@ -518,7 +518,8 @@ export async function select(id: string | null) {
     localStorage.removeItem("x-chat.active");
   }
   if (id && !store.transcripts[id]) await load(id);
-  const cwd = id ? store.metas[id]?.cwd : "";
+  const meta = id ? store.metas[id] : null;
+  const cwd = meta ? meta.worktreeRepo || meta.cwd : "";
   if (cwd) store.currentCwd = cwd;
 }
 
@@ -598,13 +599,25 @@ function isPiAgent(agentId: string): boolean {
   return id === "pi" || id === "omp" || id.includes("oh-my-pi");
 }
 
+interface WorktreeLaunchOptions {
+  enabled: boolean;
+  baseBranch?: string;
+  branchName?: string;
+  existingPath?: string;
+}
+
 export async function start(
   agentId: string,
   cwd: string,
   blocks: Block[],
   initialModel?: { configId: string; value: string } | null,
+  worktree?: WorktreeLaunchOptions | null,
 ) {
-  const meta = await api.create(agentId, cwd);
+  const meta = worktree?.enabled
+    ? worktree.existingPath
+      ? await api.attachWorktree(agentId, worktree.existingPath)
+      : await api.createWorktree(agentId, cwd, worktree.baseBranch, worktree.branchName)
+    : await api.create(agentId, cwd);
   store.metas[meta.id] = meta;
   store.transcripts[meta.id] = emptyTranscript();
   store.lives[meta.id] = { ...idleLive(), status: "connecting" };
@@ -716,6 +729,7 @@ export const respond = (id: string, requestId: string, optionId: string) => api.
 export const setMode = (id: string, modeId: string) => api.setMode(id, modeId);
 export const setConfig = (id: string, configId: string, value: string | boolean) => api.setConfig(id, configId, value);
 export const connect = (id: string) => api.connect(id);
+export const { listWorktrees, worktreeStatus, mergeWorktree, removeWorktree } = api;
 
 export async function rename(id: string, title: string) {
   store.metas[id] = await api.rename(id, title);

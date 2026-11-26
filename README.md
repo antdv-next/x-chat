@@ -9,7 +9,7 @@
   </p>
 </div>
 
-X-Chat is a local-first desktop and web workbench for Claude Code, Codex, Pi, Oh My Pi, and custom coding agents. It connects to the agents you already have installed through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
+X-Chat is a local-first desktop and web workbench for Claude Code, Codex, OpenCode, Pi, Oh My Pi, and custom coding agents. It connects to the agents you already have installed through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
 <p align="center">
   <img src="docs/screenshots/hero-light.png" alt="Conversation showing an execution plan, tool calls, and code output" width="88%" />
@@ -39,6 +39,12 @@ x-chat serve                                          # localhost:4310, random t
 x-chat serve -addr 0.0.0.0:4310 -token '<your-token>'  # listen on the LAN
 x-chat serve -no-auth                                 # local development
 ```
+
+## Git Worktrees
+
+In a Git repository, enable **Worktree** from the new-chat composer to start on a separate branch or attach to an existing linked worktree. The conversation header opens Worktree management for reviewing changes, merging or squashing, and cleanup. Deleting a conversation leaves its worktree intact unless you explicitly select cleanup.
+
+The workspace file tree supports right-click actions to create, rename, and delete files or folders.
 
 ## Architecture
 

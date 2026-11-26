@@ -11,7 +11,7 @@ import {
 } from "@antdv-next/icons";
 import { MessageScroller } from "@antdv-next/x-pro";
 import type { MessageScrollerItem, MessageScrollerRef } from "@antdv-next/x-pro";
-import { Dropdown, Input, Modal, Tooltip, message } from "antdv-next";
+import { Checkbox, Dropdown, Input, Modal, Tooltip, message } from "antdv-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import {
@@ -23,10 +23,12 @@ import {
   enqueueMessage,
   isArchived,
   isMac,
+  mergeWorktree,
   pin,
   popQueuedToDraft,
   remove,
   removeQueued,
+  removeWorktree,
   rename,
   respond,
   select,
@@ -37,9 +39,10 @@ import {
   start,
   steerQueued,
   store,
+  worktreeStatus,
 } from "../store";
 import { answerText, userText } from "../transcript";
-import type { Block, PermissionOption } from "../types";
+import type { Block, PermissionOption, WorktreeStatus } from "../types";
 import Composer from "./Composer.vue";
 import FolderPicker from "./FolderPicker.vue";
 import ProviderIcon from "./ProviderIcon.vue";
@@ -284,13 +287,35 @@ const usageLabel = computed(() => {
 function startEdit() {
   titleDraft.value = meta.value.title;
   editing.value = true;
-  void nextTick(() => document.getElementById("title-edit")?.focus());
+  void nextTick(() => {
+    const el = document.getElementById("title-edit") as HTMLInputElement | null;
+    if (!el) return;
+    el.focus();
+    el.select();
+  });
+}
+
+function cancelEdit() {
+  editing.value = false;
+  titleDraft.value = meta.value.title;
 }
 
 async function commitTitle() {
+  if (!editing.value) return;
   editing.value = false;
   const t = titleDraft.value.trim();
   if (t && t !== meta.value.title) await rename(meta.value.id, t);
+}
+
+function onTitleKeydown(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    void commitTitle();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    cancelEdit();
+  }
 }
 
 async function onSend(blocks: Block[]) {
@@ -317,7 +342,7 @@ async function reveal() {
 
 async function newSameDir() {
   try {
-    await start(meta.value.agentId, meta.value.cwd, []);
+    await start(meta.value.agentId, meta.value.worktreeRepo || meta.value.cwd, []);
   } catch (e) {
     message.error(e instanceof Error ? e.message : String(e));
   }
@@ -381,8 +406,9 @@ const menu = computed(() => ({
     { key: "rename", label: "重命名" },
     { key: "pin", label: meta.value.pinned ? "取消置顶" : "置顶" },
     { key: "archive", label: archived.value ? "取消归档" : "归档对话" },
-    { key: "new-same", label: "在同目录新建对话" },
+    { key: "new-same", label: meta.value.worktree ? "在源仓库新建对话" : "在同目录新建对话" },
     { key: "reveal", label: "在文件夹中显示" },
+    ...(meta.value.worktree ? [{ key: "clean-worktree", label: "清理 Worktree" }] : []),
     { key: "copy-id", label: "复制会话 ID" },
     { type: "divider" as const },
     { key: "delete", label: "删除对话", danger: true },
@@ -393,23 +419,149 @@ const menu = computed(() => ({
     if (key === "archive") void toggleArchive();
     if (key === "new-same") void newSameDir();
     if (key === "reveal") void reveal();
+    if (key === "clean-worktree") void openCleanWorktree();
     if (key === "copy-id") void copySessionId();
-    if (key === "delete") confirmDelete();
+    if (key === "delete") void confirmDelete();
   },
 }));
 
 const deleting = ref(false);
-function confirmDelete() {
+const deleteBusy = ref(false);
+const deleteWtStatus = ref<WorktreeStatus | null>(null);
+const deleteRemoveWt = ref(false);
+const deleteRemoveBranch = ref(false);
+
+async function confirmDelete() {
   deleting.value = true;
+  deleteWtStatus.value = null;
+  deleteRemoveWt.value = false;
+  deleteRemoveBranch.value = false;
+  if (!meta.value.worktree) return;
+  try {
+    const st = await worktreeStatus(meta.value.id);
+    deleteWtStatus.value = st;
+  } catch {
+    deleteWtStatus.value = {
+      exists: true,
+      dirty: false,
+      changedCount: 0,
+      aheadCount: 0,
+      branch: meta.value.worktreeBranch || "",
+      baseBranch: meta.value.worktreeBase || "",
+      changedFiles: [],
+    };
+  }
 }
 
-
-
 async function doDelete() {
-  deleting.value = false;
-  await remove(meta.value.id);
-  message.success("已删除");
-  void select(null);
+  if (deleteBusy.value) return;
+  deleteBusy.value = true;
+  try {
+    if (meta.value.worktree && deleteRemoveWt.value) {
+      const force = Boolean(deleteWtStatus.value?.dirty);
+      await removeWorktree(meta.value.id, force, deleteRemoveBranch.value);
+    }
+    deleting.value = false;
+    await remove(meta.value.id);
+    message.success("已删除");
+    void select(null);
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    deleteBusy.value = false;
+  }
+}
+
+const wtPanelOpen = ref(false);
+const wtPanelLoading = ref(false);
+const wtPanelStatus = ref<WorktreeStatus | null>(null);
+const wtMergeStrategy = ref<"squash" | "merge">("squash");
+const wtMergeMsg = ref("");
+const wtMergeCleanup = ref(true);
+const wtMergeBusy = ref(false);
+
+async function openWtPanel() {
+  if (!meta.value.worktree) return;
+  wtPanelOpen.value = true;
+  wtPanelLoading.value = true;
+  wtMergeMsg.value = meta.value.title && meta.value.title !== "新对话" ? `feat: ${meta.value.title}` : "";
+  try {
+    wtPanelStatus.value = await worktreeStatus(meta.value.id);
+  } catch {
+    wtPanelStatus.value = null;
+  } finally {
+    wtPanelLoading.value = false;
+  }
+}
+
+async function doMergeWorktree() {
+  if (wtMergeBusy.value) return;
+  wtMergeBusy.value = true;
+  try {
+    await mergeWorktree(meta.value.id, wtMergeStrategy.value, wtMergeMsg.value.trim(), wtMergeCleanup.value);
+    wtPanelOpen.value = false;
+    message.success(
+      wtMergeCleanup.value
+        ? `已合入 ${wtPanelStatus.value?.baseBranch || meta.value.worktreeBase || "基准分支"} 并清理 Worktree`
+        : `已合入 ${wtPanelStatus.value?.baseBranch || meta.value.worktreeBase || "基准分支"}`,
+    );
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    wtMergeBusy.value = false;
+  }
+}
+
+async function revealSourceRepo() {
+  const repo = meta.value.worktreeRepo;
+  if (!repo) return;
+  try {
+    await api.reveal(repo);
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+const cleaningWt = ref(false);
+const cleanWtBusy = ref(false);
+const cleanWtStatus = ref<WorktreeStatus | null>(null);
+const cleanWtForce = ref(false);
+const cleanWtDeleteBranch = ref(false);
+
+async function openCleanWorktree() {
+  if (!meta.value.worktree) return;
+  wtPanelOpen.value = false;
+  cleaningWt.value = true;
+  cleanWtStatus.value = null;
+  cleanWtForce.value = false;
+  cleanWtDeleteBranch.value = false;
+  try {
+    cleanWtStatus.value = await worktreeStatus(meta.value.id);
+  } catch {
+    cleanWtStatus.value = {
+      exists: true,
+      dirty: false,
+      changedCount: 0,
+      aheadCount: 0,
+      branch: meta.value.worktreeBranch || "",
+      baseBranch: meta.value.worktreeBase || "",
+      changedFiles: [],
+    };
+  }
+}
+
+async function doCleanWorktree() {
+  if (cleanWtBusy.value) return;
+  cleanWtBusy.value = true;
+  try {
+    await removeWorktree(meta.value.id, cleanWtForce.value, cleanWtDeleteBranch.value);
+    cleaningWt.value = false;
+    message.success("已清理 Worktree");
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    cleanWtBusy.value = false;
+  }
 }
 
 async function changeDir(path: string) {
@@ -436,15 +588,16 @@ async function changeDir(path: string) {
           </Tooltip>
 
           <div class="xc-title-line flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-            <Input
+            <input
               v-if="editing"
               id="title-edit"
-              v-model:value="titleDraft"
-              size="small"
-              class="w-[280px] font-semibold no-drag"
-              :maxlength="60"
+              v-model="titleDraft"
+              type="text"
+              maxlength="60"
+              placeholder="输入对话标题…"
+              class="w-[260px] max-w-full h-[26px] px-2 rounded-[7px] border border-solid border-line-strong bg-surface-strong text-[13.5px] font-semibold tracking-[-0.015em] text-ink leading-5 outline-none transition-colors duration-140 focus:border-[color-mix(in_srgb,var(--ink)_36%,var(--border-strong))] focus-visible:shadow-none no-drag"
               @blur="commitTitle"
-              @press-enter="commitTitle"
+              @keydown="onTitleKeydown"
             />
             <button
               v-else
@@ -473,7 +626,26 @@ async function changeDir(path: string) {
               <span>{{ meta.agentName }}</span>
             </span>
 
-            <Tooltip :title="`在文件夹中显示：${meta.cwd}`" :mouse-enter-delay="0.4">
+            <Tooltip
+              v-if="meta.worktree"
+              :title="`Worktree：${meta.worktreeBranch || 'detached'}（点击管理、合入 ${meta.worktreeBase || '主分支'} 或清理）\n目录：${meta.cwd}${meta.worktreeRepo ? `\n源仓库：${meta.worktreeRepo}` : ''}`"
+              :mouse-enter-delay="0.4"
+            >
+              <button
+                type="button"
+                class="xc-cwd-chip inline-flex items-center gap-[5px] h-[22px] px-2 rounded-full border border-solid border-line bg-hover text-[11px] text-ink-2 max-w-[240px] min-w-0 flex-[0_1_auto] cursor-pointer font-mono transition-colors duration-140 hover:bg-active hover:text-ink hover:border-line-strong no-drag"
+                @click="openWtPanel"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" class="w-[12px] h-[12px] text-ok flex-none">
+                  <path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5" />
+                  <circle cx="13" cy="12" r="2" />
+                  <path d="M18 19c-2.8 0-5-2.2-5-5v8" />
+                  <circle cx="20" cy="19" r="2" />
+                </svg>
+                <span class="xc-cwd-text truncate">{{ meta.worktreeBranch || shortCwd }}</span>
+              </button>
+            </Tooltip>
+            <Tooltip v-else :title="`在文件夹中显示：${meta.cwd}`" :mouse-enter-delay="0.4">
               <button
                 class="xc-cwd-chip inline-flex items-center gap-[5px] h-[22px] px-[7px] rounded-[6px] border-0 bg-transparent text-[11px] text-ink-3 max-w-[240px] min-w-0 flex-[0_1_auto] cursor-pointer font-mono transition-colors duration-140 hover:bg-hover hover:text-ink-2 no-drag"
                 @click="reveal"
@@ -494,7 +666,7 @@ async function changeDir(path: string) {
                   cx="10"
                   cy="10"
                   r="8"
-                  class="fill-none [stroke-dasharray:50.27] transition-[stroke-dashoffset] duration-400 ease-xc"
+                  class="fill-none [stroke-dasharray:50.27] transition-[stroke-dashoffset] duration-400 ease-oc"
                   :class="contextPct > 80 ? 'stroke-warn' : 'stroke-ink-solid'"
                   stroke-width="2.3"
                   stroke-linecap="round"
@@ -504,7 +676,7 @@ async function changeDir(path: string) {
               <span class="text-[11px] font-mono" :class="contextPct > 80 ? 'text-warn' : 'text-ink-3'">{{ contextPct }}%</span>
             </div>
           </Tooltip>
-          <Tooltip title="在同目录新建对话" :mouse-enter-delay="0.4">
+          <Tooltip :title="meta.worktree ? '在源仓库新建对话' : '在同目录新建对话'" :mouse-enter-delay="0.4">
             <button class="icon-btn text-[14px]" @click="newSameDir">
               <PlusOutlined />
             </button>
@@ -637,7 +809,7 @@ async function changeDir(path: string) {
           />
           <div class="h-4 flex-none" />
         </div>
-        </MessageScroller>
+      </MessageScroller>
       </div>
 
       <div class="flex-none relative px-5 pb-[14px] bg-transparent z-10">
@@ -677,14 +849,184 @@ async function changeDir(path: string) {
       <Modal
         :open="deleting"
         title="删除这个对话？"
-        :width="380"
+        :width="400"
         ok-text="删除"
         ok-type="danger"
         cancel-text="取消"
+        :confirm-loading="deleteBusy"
         @ok="doDelete"
         @cancel="deleting = false"
       >
-        <p class="text-ink-2 m-0">「{{ meta.title }}」的记录会从本机删除，无法恢复。</p>
+        <div class="flex flex-col gap-3">
+          <p class="text-ink-2 m-0">「{{ meta.title }}」的记录会从本机删除，无法恢复。</p>
+          <div v-if="meta.worktree && deleteWtStatus?.exists" class="flex flex-col gap-2 pt-2 border-0 border-t border-solid border-line">
+            <Checkbox v-model:checked="deleteRemoveWt">
+              <span class="text-[12.5px] text-ink">同时移除本地 Worktree 目录</span>
+            </Checkbox>
+            <div v-if="deleteWtStatus.dirty" class="text-[11.5px] text-warn pl-6">
+              检测到 {{ deleteWtStatus.changedCount }} 处未提交更改，勾选移除将强制丢弃这些改动。
+            </div>
+            <Checkbox v-if="deleteRemoveWt && meta.worktreeBranch" v-model:checked="deleteRemoveBranch" class="pl-6">
+              <span class="text-[12px] text-ink-2 font-mono">同时删除分支 {{ meta.worktreeBranch }}</span>
+            </Checkbox>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        :open="wtPanelOpen"
+        title="Git Worktree 管理"
+        :width="460"
+        :footer="null"
+        centered
+        @cancel="wtPanelOpen = false"
+      >
+        <div class="flex flex-col gap-3.5 pt-1">
+          <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-[10px] bg-surface-2 border border-solid border-line">
+            <div class="flex items-center gap-1.5 min-w-0 font-mono text-[12px]">
+              <span class="w-[6px] h-[6px] rounded-full bg-ok flex-none" />
+              <span class="text-ink fw-560 truncate">{{ wtPanelStatus?.branch || meta.worktreeBranch || 'worktree' }}</span>
+              <span class="text-ink-3 flex-none">→</span>
+              <span class="text-ink-2 truncate">{{ wtPanelStatus?.baseBranch || meta.worktreeBase || 'main' }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 flex-none text-[11px]">
+              <span v-if="wtPanelStatus?.aheadCount" class="px-1.5 py-[1px] rounded-[5px] bg-hover text-ink-2 font-mono">
+                +{{ wtPanelStatus.aheadCount }} commit
+              </span>
+              <span
+                v-if="wtPanelStatus"
+                class="px-1.5 py-[1px] rounded-[5px] font-mono"
+                :class="wtPanelStatus.dirty ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok'"
+              >
+                {{ wtPanelStatus.dirty ? `${wtPanelStatus.changedCount} 处未提交` : '工作区干净' }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="wtPanelLoading" class="py-4 text-center text-[12px] text-ink-3">正在检查 Worktree 状态…</div>
+
+          <template v-else-if="wtPanelStatus">
+            <div v-if="wtPanelStatus.changedFiles?.length" class="flex flex-col gap-1">
+              <div class="text-[11px] text-ink-3">未提交变更</div>
+              <div class="max-h-[140px] overflow-y-auto rounded-[9px] border border-solid border-line bg-surface-2 p-1.5 flex flex-col gap-0.5">
+                <div
+                  v-for="f in wtPanelStatus.changedFiles"
+                  :key="f.path"
+                  class="flex items-center gap-2 px-2 py-1 rounded-[6px] text-[11.5px] font-mono"
+                >
+                  <span
+                    class="w-3.5 text-center fw-600 flex-none"
+                    :class="f.status === 'D' ? 'text-err' : f.status === 'A' || f.status === '?' ? 'text-ok' : 'text-warn'"
+                  >
+                    {{ f.status }}
+                  </span>
+                  <span class="text-ink truncate flex-1" :title="f.path">{{ f.path }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="wtPanelStatus.exists && (wtPanelStatus.aheadCount > 0 || wtPanelStatus.dirty)"
+              class="flex flex-col gap-2.5 p-3 rounded-[10px] border border-solid border-line bg-surface-2"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[12px] fw-560 text-ink">合入到 {{ wtPanelStatus.baseBranch || '基准分支' }}</span>
+                <div class="inline-flex gap-1 p-[2px] rounded-[7px] bg-hover">
+                  <button
+                    type="button"
+                    class="px-2 h-[22px] border-0 rounded-[5px] text-[11px] cursor-pointer"
+                    :class="wtMergeStrategy === 'squash' ? 'bg-surface-strong text-ink fw-560 shadow-card' : 'bg-transparent text-ink-2'"
+                    @click="wtMergeStrategy = 'squash'"
+                  >
+                    压缩合入
+                  </button>
+                  <button
+                    type="button"
+                    class="px-2 h-[22px] border-0 rounded-[5px] text-[11px] cursor-pointer"
+                    :class="wtMergeStrategy === 'merge' ? 'bg-surface-strong text-ink fw-560 shadow-card' : 'bg-transparent text-ink-2'"
+                    @click="wtMergeStrategy = 'merge'"
+                  >
+                    保留提交
+                  </button>
+                </div>
+              </div>
+              <Input
+                v-if="wtPanelStatus.dirty || wtMergeStrategy === 'squash'"
+                v-model:value="wtMergeMsg"
+                size="small"
+                placeholder="提交说明（例如 feat: 完成某某功能）"
+              />
+              <div class="flex items-center justify-between gap-2 pt-0.5">
+                <Checkbox v-model:checked="wtMergeCleanup">
+                  <span class="text-[12px] text-ink-2">合入后自动清理 Worktree 和分支</span>
+                </Checkbox>
+                <button
+                  type="button"
+                  class="h-7 px-3 rounded-[8px] border-0 bg-ink-solid text-ink-inv text-[12px] fw-540 cursor-pointer transition-opacity duration-140 hover:not-disabled:opacity-88 disabled:opacity-50 disabled:cursor-wait flex-none"
+                  :disabled="wtMergeBusy"
+                  @click="doMergeWorktree"
+                >
+                  {{ wtMergeBusy ? '合入中…' : '立即合入' }}
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <div class="flex items-center justify-between gap-2 pt-1 border-0 border-t border-solid border-line">
+            <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                class="h-7 px-2.5 rounded-[7px] border border-solid border-line bg-transparent text-ink-2 text-[12px] cursor-pointer hover:bg-hover hover:text-ink"
+                @click="reveal"
+              >
+                打开 Worktree 目录
+              </button>
+              <button
+                v-if="meta.worktreeRepo"
+                type="button"
+                class="h-7 px-2.5 rounded-[7px] border border-solid border-line bg-transparent text-ink-2 text-[12px] cursor-pointer hover:bg-hover hover:text-ink"
+                @click="revealSourceRepo"
+              >
+                打开源仓库
+              </button>
+            </div>
+            <button
+              type="button"
+              class="h-7 px-2.5 rounded-[7px] border-0 bg-transparent text-err text-[12px] cursor-pointer hover:bg-err-soft"
+              @click="openCleanWorktree"
+            >
+              清理 Worktree
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        :open="cleaningWt"
+        title="清理 Git Worktree"
+        :width="400"
+        ok-text="清理"
+        ok-type="danger"
+        cancel-text="取消"
+        :confirm-loading="cleanWtBusy"
+        :ok-button-props="{ disabled: Boolean(cleanWtStatus?.dirty && !cleanWtForce) }"
+        @ok="doCleanWorktree"
+        @cancel="cleaningWt = false"
+      >
+        <div class="flex flex-col gap-2.5">
+          <p class="text-ink-2 m-0 text-[12.5px]">
+            移除隔离目录 <code class="font-mono text-ink">{{ shortCwd }}</code>，保留对话记录并切回源仓库。
+          </p>
+          <div v-if="cleanWtStatus?.dirty" class="text-[12px] text-warn bg-warn-soft rounded-[8px] px-3 py-2">
+            检测到 {{ cleanWtStatus.changedCount }} 处未提交更改，清理前请先提交，或勾选下方强制清理。
+          </div>
+          <Checkbox v-if="cleanWtStatus?.dirty" v-model:checked="cleanWtForce">
+            <span class="text-[12.5px] text-err">强制清理（丢弃未提交更改）</span>
+          </Checkbox>
+          <Checkbox v-if="meta.worktreeBranch" v-model:checked="cleanWtDeleteBranch">
+            <span class="text-[12px] text-ink-2 font-mono">同时删除分支 {{ meta.worktreeBranch }}</span>
+          </Checkbox>
+        </div>
       </Modal>
     </div>
     <WorkspacePanel

@@ -63,6 +63,8 @@ type Host struct {
 	termMu sync.Mutex
 	terms  map[string]*termSession
 
+	worktreeMu sync.Mutex
+
 	fileSrvMu      sync.Mutex
 	fileSrv        *http.Server
 	fileSrvBaseURL string
@@ -883,6 +885,11 @@ func isDir(p string) bool {
 }
 
 func (h *Host) runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := h.runGitRaw(ctx, dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+func (h *Host) runGitRaw(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	gitBin := lookPath(h.environ(), "git")
@@ -906,7 +913,7 @@ func (h *Host) runGit(ctx context.Context, dir string, args ...string) (string, 
 		}
 		return "", errors.New(msg)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 func (h *Host) gitInfo(ctx context.Context, path string) (GitInfo, error) {

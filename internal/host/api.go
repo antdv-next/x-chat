@@ -133,6 +133,38 @@ func (a *API) Create(agentID, cwd string) (Meta, error) {
 	return m, nil
 }
 
+func (a *API) CreateWorktree(ctx context.Context, agentID, repoDir, baseBranch, branchName string) (Meta, error) {
+	meta, err := a.h.createWithWorktree(context.WithoutCancel(ctx), agentID, repoDir, baseBranch, branchName)
+	if err == nil {
+		go func() { _, _ = a.h.connect(context.Background(), meta.ID) }()
+	}
+	return meta, err
+}
+
+func (a *API) AttachWorktree(ctx context.Context, agentID, path string) (Meta, error) {
+	meta, err := a.h.attachWorktree(context.WithoutCancel(ctx), agentID, path)
+	if err == nil {
+		go func() { _, _ = a.h.connect(context.Background(), meta.ID) }()
+	}
+	return meta, err
+}
+
+func (a *API) ListWorktrees(ctx context.Context, repoDir string) ([]WorktreeInfo, error) {
+	return a.h.listWorktrees(ctx, repoDir)
+}
+
+func (a *API) WorktreeStatus(ctx context.Context, id string) (WorktreeStatus, error) {
+	return a.h.worktreeStatus(ctx, id)
+}
+
+func (a *API) MergeWorktree(ctx context.Context, id, strategy, commitMsg string, cleanup bool) error {
+	return a.h.mergeWorktree(context.WithoutCancel(ctx), id, strategy, commitMsg, cleanup)
+}
+
+func (a *API) RemoveWorktree(ctx context.Context, id string, force, deleteBranch bool) error {
+	return a.h.removeWorktree(context.WithoutCancel(ctx), id, force, deleteBranch)
+}
+
 // Open returns a conversation's transcript and live state.
 func (a *API) Open(id string) (Conversation, error) {
 	m, ok := a.h.store.meta(id)
@@ -440,6 +472,18 @@ func (a *API) WorkspaceWriteFile(cwd, relPath, content string) error {
 // WorkspaceFileInfo returns metadata and a streaming HTTP URL for a workspace file.
 func (a *API) WorkspaceFileInfo(cwd, relPath string) (WorkspaceFileInfo, error) {
 	return a.h.workspaceFileInfo(cwd, relPath)
+}
+
+func (a *API) WorkspaceCreate(cwd, relPath string, isDir bool) error {
+	return createWorkspaceEntry(cwd, relPath, isDir)
+}
+
+func (a *API) WorkspaceRename(cwd, oldRelPath, newRelPath string) error {
+	return renameWorkspaceEntry(cwd, oldRelPath, newRelPath)
+}
+
+func (a *API) WorkspaceDelete(cwd, relPath string) error {
+	return deleteWorkspaceEntry(cwd, relPath)
 }
 
 // TermCreate spawns an interactive PTY shell session rooted at cwd.

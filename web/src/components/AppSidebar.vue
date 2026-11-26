@@ -334,7 +334,13 @@ function labelRender(item: ConversationItemType) {
       h("span", { class: "conv-sub" }, [
         h("span", { class: "conv-agent" }, m.agentName),
         m.cwd ? h("span", { class: "conv-sep" }, "·") : null,
-        m.cwd ? h("span", { class: "conv-dir mono" }, shortDir(m.cwd)) : null,
+        m.cwd
+          ? h(
+              "span",
+              { class: "conv-dir mono" },
+              m.worktree ? `wt:${m.worktreeBranch || shortDir(m.cwd)}` : shortDir(m.cwd),
+            )
+          : null,
       ]),
       h("span", { class: "conv-time mono" }, ago(m.updatedAt)),
     ]),
@@ -560,7 +566,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
     >
       <div class="flex-1" />
       <div
-        class="flex items-center gap-[2px] transition-opacity duration-150 ease-xc no-drag"
+        class="flex items-center gap-[2px] transition-opacity duration-150 ease-oc no-drag"
         :class="selecting ? 'opacity-100' : 'opacity-55 group-hover:opacity-100'"
       >
         <Tooltip
@@ -587,7 +593,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
 
     <div class="px-[10px] pt-[2px] pb-2 flex flex-col gap-[6px]">
       <button
-        class="group/new w-full h-[34px] flex items-center gap-2 px-[10px] rounded-[9px] border border-solid border-transparent bg-[color-mix(in_srgb,var(--ink)_4.5%,transparent)] text-ink text-[13px] fw-530 whitespace-nowrap cursor-pointer transition-all duration-140 ease-xc hover:bg-surface hover:border-line active:scale-[0.99]"
+        class="group/new w-full h-[34px] flex items-center gap-2 px-[10px] rounded-[9px] border border-solid border-transparent bg-[color-mix(in_srgb,var(--ink)_4.5%,transparent)] text-ink text-[13px] fw-530 whitespace-nowrap cursor-pointer transition-all duration-140 ease-oc hover:bg-surface hover:border-line active:scale-[0.99]"
         @click="newConversation()"
       >
         <!-- Lucide SquarePen -->
@@ -600,7 +606,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
       </button>
 
       <label
-        class="group/search h-8 flex items-center gap-[7px] px-[9px] rounded-[9px] border border-solid border-transparent bg-[color-mix(in_srgb,var(--ink)_3.8%,transparent)] cursor-text transition-all duration-160 ease-xc hover:bg-surface-2 hover:border-line focus-within:bg-surface focus-within:border-line-strong focus-within:shadow-card"
+        class="group/search h-8 flex items-center gap-[7px] px-[9px] rounded-[9px] border border-solid border-transparent bg-[color-mix(in_srgb,var(--ink)_3.8%,transparent)] cursor-text transition-all duration-160 ease-oc hover:bg-surface-2 hover:border-line focus-within:bg-surface focus-within:border-line-strong focus-within:shadow-card"
         for="conv-search"
       >
         <!-- Lucide Search -->
@@ -742,7 +748,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
       <div class="flex items-center gap-[5px]">
         <Dropdown :menu="avatarMenu" :trigger="['click']" placement="topLeft" root-class="xc-avatar-dropdown">
           <button
-            class="group/avatar relative w-7 h-7 p-0 rounded-full border border-solid border-line-strong bg-surface text-ink-2 grid place-items-center overflow-hidden cursor-pointer flex-none shadow-card transition-colors duration-140 ease-xc hover:border-ink-solid"
+            class="group/avatar relative w-7 h-7 p-0 rounded-full border border-solid border-line-strong bg-surface text-ink-2 grid place-items-center overflow-hidden cursor-pointer flex-none shadow-card transition-colors duration-140 ease-oc hover:border-ink-solid"
             aria-label="用户头像"
           >
             <img v-if="store.userAvatar" :src="store.userAvatar" alt="用户头像" class="w-full h-full object-cover block" />
@@ -778,7 +784,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
 
         <Tooltip :title="`设置 (${isMac ? '⌘' : 'Ctrl'} ,)`" :mouse-enter-delay="0.35">
           <button
-            class="inline-grid place-items-center w-7 h-7 rounded-[8px] border border-solid border-transparent bg-transparent text-ink-3 cursor-pointer transition-all duration-140 ease-xc hover:bg-hover hover:border-line hover:text-ink active:scale-[0.94]"
+            class="inline-grid place-items-center w-7 h-7 rounded-[8px] border border-solid border-transparent bg-transparent text-ink-3 cursor-pointer transition-all duration-140 ease-oc hover:bg-hover hover:border-line hover:text-ink active:scale-[0.94]"
             aria-label="设置"
             @click="store.settingsOpen = true"
           >
@@ -800,7 +806,7 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
 
         <Tooltip :title="isDark ? '切换到浅色模式' : '切换到深色模式'" :mouse-enter-delay="0.35">
           <button
-            class="inline-grid place-items-center w-7 h-7 rounded-[8px] border border-solid border-transparent bg-transparent text-ink-3 cursor-pointer transition-all duration-140 ease-xc hover:bg-hover hover:border-line hover:text-ink active:scale-[0.94]"
+            class="inline-grid place-items-center w-7 h-7 rounded-[8px] border border-solid border-transparent bg-transparent text-ink-3 cursor-pointer transition-all duration-140 ease-oc hover:bg-hover hover:border-line hover:text-ink active:scale-[0.94]"
             aria-label="切换主题"
             @click="toggleTheme"
           >

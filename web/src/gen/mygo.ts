@@ -190,6 +190,10 @@ export interface Meta {
   agentId: string;
   agentName: string;
   cwd: string;
+  worktree?: boolean;
+  worktreeRepo?: string;
+  worktreeBranch?: string;
+  worktreeBase?: string;
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
@@ -302,6 +306,29 @@ export interface WorkspaceNode {
   children?: WorkspaceNode[];
 }
 
+export interface WorktreeFileChange {
+  path: string;
+  status: string;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  isMain: boolean;
+  dirty: boolean;
+  changedCount: number;
+}
+
+export interface WorktreeStatus {
+  exists: boolean;
+  dirty: boolean;
+  changedCount: number;
+  aheadCount: number;
+  branch: string;
+  baseBranch: string;
+  changedFiles: WorktreeFileChange[];
+}
+
 // ---- Services ----
 
 /**
@@ -314,6 +341,7 @@ export const Host = {
   agents: bind<[], AgentInfo[]>("Host.Agents", () => []),
   /** Archive archives or unarchives a conversation. */
   archive: bind<[string, boolean], Meta>("Host.Archive", (id: string, archived: boolean) => [id, archived]),
+  attachWorktree: bind<[string, string], Meta>("Host.AttachWorktree", (agentID: string, path: string) => [agentID, path]),
   /** Bootstrap returns everything the first frame needs. */
   bootstrap: bind<[], Bootstrap>("Host.Bootstrap", () => []),
   /** Cancel stops the running turn. */
@@ -325,6 +353,7 @@ export const Host = {
    * connects it in the background, so its modes and models show up quickly.
    */
   create: bind<[string, string], Meta>("Host.Create", (agentID: string, cwd: string) => [agentID, cwd]),
+  createWorktree: bind<[string, string, string, string], Meta>("Host.CreateWorktree", (agentID: string, repoDir: string, baseBranch: string, branchName: string) => [agentID, repoDir, baseBranch, branchName]),
   /** Delete removes a conversation and ends its session. */
   delete: bind<[string], void>("Host.Delete", (id: string) => [id]),
   /** GitCheckout switches the git repository at path to branch and returns updated info. */
@@ -342,6 +371,8 @@ export const Host = {
   listDir: bind<[string], DirListing>("Host.ListDir", (path: string) => [path]),
   /** ListSkills returns local skills discovered in project and user skill directories. */
   listSkills: bind<[string], SkillInfo[]>("Host.ListSkills", (cwd: string) => [cwd]),
+  listWorktrees: bind<[string], WorktreeInfo[]>("Host.ListWorktrees", (repoDir: string) => [repoDir]),
+  mergeWorktree: bind<[string, string, string, boolean], void>("Host.MergeWorktree", (id: string, strategy: string, commitMsg: string, cleanup: boolean) => [id, strategy, commitMsg, cleanup]),
   /** Notify displays a native OS desktop notification. */
   notify: bind<[string, string, string, string, boolean], void>("Host.Notify", (conversationID: string, title: string, subtitle: string, body: string, sound: boolean) => [conversationID, title, subtitle, body, sound]),
   /** Open returns a conversation's transcript and live state. */
@@ -364,6 +395,7 @@ export const Host = {
    * CodeBuddy CN/intl environment changes) show up without restarting x-chat.
    */
   refreshModels: bind<[string, string], unknown[]>("Host.RefreshModels", (agentID: string, cwd: string) => [agentID, cwd]),
+  removeWorktree: bind<[string, boolean, boolean], void>("Host.RemoveWorktree", (id: string, force: boolean, deleteBranch: boolean) => [id, force, deleteBranch]),
   /** Rename sets a conversation's title; agents no longer retitle it. */
   rename: bind<[string, string], Meta>("Host.Rename", (id: string, title: string) => [id, title]),
   /** Respond answers a permission request; an empty optionID dismisses it. */
@@ -393,14 +425,18 @@ export const Host = {
    * and refreshes the host login environment when any agent was updated.
    */
   upgradeAgents: bind<[AgentUpdateOptions], AgentUpdateReport | null>("Host.UpgradeAgents", (opts: AgentUpdateOptions) => [opts]),
+  workspaceCreate: bind<[string, string, boolean], void>("Host.WorkspaceCreate", (cwd: string, relPath: string, isDir: boolean) => [cwd, relPath, isDir]),
+  workspaceDelete: bind<[string, string], void>("Host.WorkspaceDelete", (cwd: string, relPath: string) => [cwd, relPath]),
   /** WorkspaceFileInfo returns metadata and a streaming HTTP URL for a workspace file. */
   workspaceFileInfo: bind<[string, string], WorkspaceFileInfo>("Host.WorkspaceFileInfo", (cwd: string, relPath: string) => [cwd, relPath]),
   /** WorkspaceReadFile returns the UTF-8 text content of a file inside cwd. */
   workspaceReadFile: bind<[string, string], string>("Host.WorkspaceReadFile", (cwd: string, relPath: string) => [cwd, relPath]),
+  workspaceRename: bind<[string, string, string], void>("Host.WorkspaceRename", (cwd: string, oldRelPath: string, newRelPath: string) => [cwd, oldRelPath, newRelPath]),
   /** WorkspaceTree returns the file tree of cwd for the workspace panel. */
   workspaceTree: bind<[string], WorkspaceNode[]>("Host.WorkspaceTree", (cwd: string) => [cwd]),
   /** WorkspaceWriteFile saves UTF-8 text content to a file inside cwd. */
   workspaceWriteFile: bind<[string, string, string], void>("Host.WorkspaceWriteFile", (cwd: string, relPath: string, content: string) => [cwd, relPath, content]),
+  worktreeStatus: bind<[string], WorktreeStatus>("Host.WorktreeStatus", (id: string) => [id]),
 } as const;
 
 // ---- Events ----

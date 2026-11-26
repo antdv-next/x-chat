@@ -14,8 +14,8 @@
  *
  * stdout carries protocol frames only — logs go to stderr.
  */
-import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { basename, delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { version } from "../../package.json";
 import {
@@ -92,6 +92,15 @@ export function catalog(): AgentPreset[] {
       homepage: "https://github.com/openai/codex",
     },
     {
+      id: "opencode",
+      name: "OpenCode",
+      description: "OpenCode CLI，原生 ACP（opencode acp）",
+      command: "opencode",
+      args: ["acp"],
+      probe: "opencode",
+      homepage: "https://opencode.ai",
+    },
+    {
       id: "codebuddy",
       name: "CodeBuddy",
       description: "腾讯 CodeBuddy Code，原生 ACP（codebuddy --acp）",
@@ -158,7 +167,7 @@ interface Live {
 
 const adapters = new Map<
   string,
-  { adapter: AcpAgentAdapter; caps: AgentCapabilities; users: number; stderrTail: string[] }
+  { adapter: AcpAgentAdapter; caps: AgentCapabilities; users: number; stderrTail: string[]; baseKey: string; retired?: boolean }
 >();
 const lives = new Map<string, Live>();
 
@@ -182,9 +191,14 @@ function bumpGeneration(agent: AgentLaunch, cwd: string): void {
   launchGeneration.set(base, (launchGeneration.get(base) ?? 0) + 1);
 }
 
-function agentKeyOf(agent: AgentLaunch, cwd: string): string {
-  const base = launchBase(agent, cwd);
-  return `${base}#${launchGeneration.get(base) ?? 0}`;
+function nativeSpawnCwd(command: string, cwd: string): string | undefined {
+  const name = basename(command).toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, "");
+  if (["npm", "npx", "pnpm", "yarn", "bunx"].includes(name)) return;
+  try {
+    if (cwd && statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) return cwd;
+  } catch {
+    return;
+  }
 }
 
 function isPnpmShimDir(dir: string): boolean {
@@ -248,7 +262,8 @@ async function adapterFor(agent: AgentLaunch, cwd: string): Promise<{
   caps: AgentCapabilities;
   stderrTail: string[];
 }> {
-  const key = agentKeyOf(agent, cwd);
+  const baseKey = launchBase(agent, cwd);
+  const key = `${baseKey}#${launchGeneration.get(baseKey) ?? 0}`;
   const cached = adapters.get(key);
   if (cached && cached.adapter.rawConnection?.isConnected) return { key, ...cached };
   if (cached) adapters.delete(key);
@@ -262,12 +277,15 @@ async function adapterFor(agent: AgentLaunch, cwd: string): Promise<{
   // Avoid nested Claude Code rejection when x-chat is launched from inside Claude Code.
   if ("CLAUDECODE" in process.env) delete process.env.CLAUDECODE;
   const resolved = resolveLaunch(agent, cleanEnv);
+  (cleanEnv as Record<string, string | undefined>).INIT_CWD = undefined;
+  const spawnCwd = nativeSpawnCwd(resolved.command, cwd);
+  if (spawnCwd && process.platform !== "win32") cleanEnv.PWD = spawnCwd;
   const adapter = new AcpAgentAdapter(
     agent.id,
-    // Don't spawn in the conversation cwd: npm/npx reads devEngines there and
+    // Package runners stay outside the project: npm/npx reads devEngines there and
     // fails with EBADDEVENGINES if the project pins a different node version.
     // The session cwd is still passed via createSession({ cwd }).
-    { command: resolved.command, args: resolved.args, env: cleanEnv },
+    { command: resolved.command, args: resolved.args, env: cleanEnv, ...(spawnCwd ? { cwd: spawnCwd } : {}) },
     {
       clientInfo: { name: "x-chat", version },
       initializeTimeoutMs: 120_000,
@@ -284,7 +302,7 @@ async function adapterFor(agent: AgentLaunch, cwd: string): Promise<{
   );
   try {
     const caps = await adapter.connect();
-    adapters.set(key, { adapter, caps, users: 0, stderrTail });
+    adapters.set(key, { adapter, caps, users: 0, stderrTail, baseKey });
     return { key, adapter, caps, stderrTail };
   } catch (error) {
     await adapter.dispose().catch(() => {});
@@ -350,6 +368,7 @@ function pump(live: Live): void {
     let failure: string | undefined;
     try {
       for await (const event of live.session.events) {
+        if (lives.get(live.key) !== live) return;
         if (event.type === "raw") {
           const update = event.update as Record<string, unknown> | null;
           const end = update?.[TURN_END] as Record<string, unknown> | undefined;
@@ -394,11 +413,10 @@ function pump(live: Live): void {
       clearTimeout(live.cancelTimer);
       live.cancelTimer = null;
     }
+    if (lives.get(live.key) !== live) return;
     flush(live);
-    if (lives.get(live.key) === live) {
-      lives.delete(live.key);
-      release(live.agentKey);
-    }
+    lives.delete(live.key);
+    release(live.agentKey);
     notify("closed", { key: live.key, ...(failure ? { error: failure } : {}) });
   })();
 }
@@ -408,6 +426,11 @@ function release(agentKey: string): void {
   if (!entry) return;
   entry.users -= 1;
   if (entry.users > 0) return;
+  if (entry.retired) {
+    adapters.delete(agentKey);
+    void entry.adapter.dispose().catch(() => {});
+    return;
+  }
   // Idle agent processes are reclaimed after a grace period, so switching
   // between conversations of one agent doesn't respawn it every time.
   setTimeout(() => {
@@ -607,20 +630,22 @@ const methods: Record<string, (params: Record<string, unknown> | undefined) => P
   async cancel(params) {
     const key = String(params?.key ?? "");
     const live = lives.get(key);
-    if (!live) return { ok: true };
-    for (const requestId of live.pendingPermissions) {
-      await live.session.cancelPermission(requestId).catch(() => {});
-      enqueue(live, { type: "permission_resolved", requestId, optionId: null } as never);
+    if (!live) {
+      if (key) notify("events", { key, events: [{ type: "turn_end", stopReason: "cancelled" }] });
+      return { ok: true };
     }
-    live.pendingPermissions.clear();
     // Second click while already cancelling immediately force-stops the hung session.
     if (live.cancelTimer) {
       forceCancel(live);
       return { ok: true };
     }
-    await live.session.interrupt().catch(() => {});
-    // Some ACP agents hang or ignore session/cancel; force-finish after a short grace window.
     live.cancelTimer = setTimeout(() => forceCancel(live), 3_000);
+    for (const requestId of live.pendingPermissions) {
+      void live.session.cancelPermission(requestId).catch(() => {});
+      enqueue(live, { type: "permission_resolved", requestId, optionId: null } as never);
+    }
+    live.pendingPermissions.clear();
+    void live.session.interrupt().catch(() => {});
     return { ok: true };
   },
 
@@ -695,14 +720,19 @@ function forceCancel(live: Live): void {
     clearTimeout(live.cancelTimer);
     live.cancelTimer = null;
   }
+  if (lives.get(live.key) !== live) return;
   live.promptSeq += 1;
   flush(live);
   notify("events", { key: live.key, events: [{ type: "turn_end", stopReason: "cancelled" }] });
-  if (lives.get(live.key) === live) {
-    lives.delete(live.key);
-    void live.session.dispose().catch(() => {});
-    release(live.agentKey);
+  lives.delete(live.key);
+  const entry = adapters.get(live.agentKey);
+  if (entry && !entry.retired) {
+    entry.retired = true;
+    launchGeneration.set(entry.baseKey, (launchGeneration.get(entry.baseKey) ?? 0) + 1);
   }
+  void live.session.dispose().catch(() => {});
+  release(live.agentKey);
+  notify("closed", { key: live.key });
 }
 
 async function disposeAll(): Promise<void> {

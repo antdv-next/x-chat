@@ -53,12 +53,17 @@ const props = defineProps<{
   pendingPerms?: PendingPermission[];
   /** Queued follow-up messages waiting to be sent. */
   queuedMessages?: QueuedMessage[];
+  /** Highlight the git branch selector as the base branch for a new Worktree. */
+  worktreeMode?: boolean;
+  worktreeBase?: string;
 }>();
 
 const emit = defineEmits<{
   "update:value": [value: string];
   "update:agentId": [id: string];
   "update:cwd": [path: string];
+  "git-branch": [branch: string];
+  "is-git-repo": [isRepo: boolean];
   send: [blocks: Block[]];
   enqueue: [blocks: Block[]];
   stop: [];
@@ -298,7 +303,7 @@ const effortMenu = computed(() => ({
 }));
 
 const isGitRepo = computed(() => Boolean(gitInfo.value?.isRepo || gitFallbackRepo.value));
-const currentBranch = computed(() => gitInfo.value?.branch || "git");
+const currentBranch = computed(() => (props.worktreeMode && props.worktreeBase) || gitInfo.value?.branch || "git");
 const branches = computed(() => gitInfo.value?.branches ?? []);
 
 async function refreshGit(dir: string) {
@@ -308,30 +313,44 @@ async function refreshGit(dir: string) {
     return;
   }
   const cached = gitCache.get(dir);
-  if (cached) {
-    gitInfo.value = cached.info;
-    gitFallbackRepo.value = cached.fallback;
-  }
+  gitInfo.value = cached?.info ?? null;
+  gitFallbackRepo.value = cached?.fallback ?? false;
   try {
     const info = await api.gitInfo(dir);
+    if (props.cwd !== dir) return;
     gitInfo.value = info;
     gitFallbackRepo.value = false;
     gitCache.set(dir, { info, fallback: false });
   } catch {
+    if (props.cwd !== dir) return;
     gitInfo.value = null;
     try {
       const listing = await api.listDir(dir);
+      if (props.cwd !== dir) return;
       const fallback = Boolean(listing?.isRepo);
       gitFallbackRepo.value = fallback;
       gitCache.set(dir, { info: null, fallback });
     } catch {
-      gitFallbackRepo.value = false;
+      if (props.cwd === dir) gitFallbackRepo.value = false;
     }
   }
 }
 
+watch(
+  () => [isGitRepo.value, gitInfo.value?.branch ?? ""] as const,
+  ([repo, branch]) => {
+    emit("is-git-repo", repo);
+    emit("git-branch", repo ? branch : "");
+  },
+  { immediate: true },
+);
+
 async function switchBranch(branch: string) {
   if (!props.cwd || !branch || branch === currentBranch.value || switchingBranch.value) return;
+  if (props.worktreeMode) {
+    emit("git-branch", branch);
+    return;
+  }
   switchingBranch.value = true;
   try {
     const res = await api.gitCheckout(props.cwd, branch);
@@ -802,7 +821,7 @@ defineExpose({ addFiles });
         v-for="(kind, idx) in backDeckCards"
         :key="kind"
         type="button"
-        class="group/peek flex items-center gap-2 h-[38px] px-[14px] pb-2 border border-solid border-b-0 rounded-t-[14px] glass text-ink-2 text-[12px] cursor-pointer transition-all duration-200 ease-xc hover:-translate-y-[2px] hover:text-ink"
+        class="group/peek flex items-center gap-2 h-[38px] px-[14px] pb-2 border border-solid border-b-0 rounded-t-[14px] glass text-ink-2 text-[12px] cursor-pointer transition-all duration-200 ease-oc hover:-translate-y-[2px] hover:text-ink"
         :class="[
           backDeckCards.length >= 2 && idx === 0 ? 'w-[90%] -mb-[10px] z-1 opacity-88' : 'w-[95%] z-2',
           kind === 'permission'
@@ -901,7 +920,7 @@ defineExpose({ addFiles });
       <!-- Active Front Card: Queued Messages -->
       <div v-else-if="effectiveDeck === 'queue' && queueList.length" class="px-3 py-2">
         <div class="w-full flex flex-col gap-1 max-h-[116px] overflow-y-auto">
-          <div v-for="(item, qi) in queueList" :key="item.id" class="flex items-center gap-2 min-h-[26px] py-[2px] pl-[6px] pr-1 rounded-[7px] transition-colors duration-140 ease-xc hover:bg-hover">
+          <div v-for="(item, qi) in queueList" :key="item.id" class="flex items-center gap-2 min-h-[26px] py-[2px] pl-[6px] pr-1 rounded-[7px] transition-colors duration-140 ease-oc hover:bg-hover">
             <span class="w-[17px] h-[17px] rounded-[5px] bg-hover border border-solid border-line text-ink-3 text-[10.5px] inline-grid place-items-center flex-none font-mono">{{ qi + 1 }}</span>
             <span class="flex-1 min-w-0 text-[12px] text-ink truncate" :title="queuePreview(item.blocks)">{{ queuePreview(item.blocks) }}</span>
             <div class="inline-flex items-center gap-[2px] flex-none">
@@ -967,7 +986,7 @@ defineExpose({ addFiles });
             v-for="(c, i) in slashItems"
             :key="c.name"
             type="button"
-            class="flex flex-col gap-1 px-[10px] py-2 rounded-[11px] border border-solid shadow-card text-left cursor-pointer min-w-0 transition-all duration-150 ease-xc hover:-translate-y-[1px] hover:border-[color-mix(in_srgb,#6366f1_34%,var(--border-strong))] hover:shadow-pop"
+            class="flex flex-col gap-1 px-[10px] py-2 rounded-[11px] border border-solid shadow-card text-left cursor-pointer min-w-0 transition-all duration-150 ease-oc hover:-translate-y-[1px] hover:border-[color-mix(in_srgb,#6366f1_34%,var(--border-strong))] hover:shadow-pop"
             :class="
               i === slashIndex
                 ? 'border-[color-mix(in_srgb,#6366f1_52%,var(--border-strong))] bg-[color-mix(in_srgb,#6366f1_7%,var(--surface-strong))]'
@@ -1042,7 +1061,7 @@ defineExpose({ addFiles });
         <Tooltip title="继续添加图片或文件" :mouse-enter-delay="0.3">
           <button
             type="button"
-            class="w-[68px] h-[68px] rounded-[12px] border-[1.5px] border-dashed border-line-strong bg-transparent flex items-center justify-center text-ink-3 cursor-pointer flex-none transition-all duration-160 ease-xc hover:border-ink-solid hover:bg-surface hover:text-ink active:scale-[0.96]"
+            class="w-[68px] h-[68px] rounded-[12px] border-[1.5px] border-dashed border-line-strong bg-transparent flex items-center justify-center text-ink-3 cursor-pointer flex-none transition-all duration-160 ease-oc hover:border-ink-solid hover:bg-surface hover:text-ink active:scale-[0.96]"
             aria-label="添加图片或文件"
             @click="inputFiles?.click()"
           >
@@ -1060,7 +1079,7 @@ defineExpose({ addFiles });
 
       <!-- Layer 2: Main Sender card keeps its full 4-corner 18px rounded border intact -->
       <div
-        class="relative z-2 border border-solid glass rounded-[18px] transition-all duration-180 ease-xc overflow-hidden focus-within:bg-surface-strong focus-within:border-[color-mix(in_srgb,var(--ink)_28%,var(--border-strong))] focus-within:shadow-[var(--shadow-composer),0_0_0_3px_var(--accent-soft)]"
+        class="relative z-2 border border-solid glass rounded-[18px] transition-all duration-180 ease-oc overflow-hidden focus-within:bg-surface-strong focus-within:border-[color-mix(in_srgb,var(--ink)_28%,var(--border-strong))] focus-within:shadow-[var(--shadow-composer),0_0_0_3px_var(--accent-soft)]"
         :class="[
           effectiveDeck !== null ? 'mx-[-1px] mb-[-1px] bg-surface-strong shadow-[0_-2px_12px_rgba(0,0,0,0.1),var(--glass-rim)]' : 'bg-surface shadow-composer',
           dragging ? 'border-ink-solid shadow-[0_0_0_3px_var(--accent-soft)]' : 'border-line-strong',
@@ -1156,7 +1175,7 @@ defineExpose({ addFiles });
                     :mouse-enter-delay="0.3"
                   >
                     <button
-                      class="w-[30px] h-[30px] rounded-full border border-solid border-line-strong bg-surface-2 text-ink inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-xc hover:bg-ink-solid hover:border-ink-solid hover:text-ink-inv hover:scale-[1.04] active:scale-[0.96]"
+                      class="w-[30px] h-[30px] rounded-full border border-solid border-line-strong bg-surface-2 text-ink inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-oc hover:bg-ink-solid hover:border-ink-solid hover:text-ink-inv hover:scale-[1.04] active:scale-[0.96]"
                       @click="() => submit()"
                       aria-label="加入队列"
                     >
@@ -1169,7 +1188,7 @@ defineExpose({ addFiles });
                   </Tooltip>
                   <Tooltip title="停止生成" :mouse-enter-delay="0.3">
                     <button
-                      class="w-[30px] h-[30px] rounded-full border-0 bg-ink-solid text-ink-inv inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-xc hover:scale-[1.04] active:scale-[0.96]"
+                      class="w-[30px] h-[30px] rounded-full border-0 bg-ink-solid text-ink-inv inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-oc hover:scale-[1.04] active:scale-[0.96]"
                       @click="emit('stop')"
                       aria-label="停止"
                     >
@@ -1179,7 +1198,7 @@ defineExpose({ addFiles });
                 </template>
                 <Tooltip v-else :title="`发送 (${sendKey === 'enter' ? 'Enter' : 'Shift+Enter'})`" :mouse-enter-delay="0.3">
                   <button
-                    class="w-[30px] h-[30px] rounded-full border-0 bg-ink-solid text-ink-inv inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-xc hover:not-disabled:scale-[1.04] active:not-disabled:scale-[0.96] disabled:bg-hover disabled:text-ink-3 disabled:cursor-not-allowed disabled:opacity-65"
+                    class="w-[30px] h-[30px] rounded-full border-0 bg-ink-solid text-ink-inv inline-grid place-items-center cursor-pointer flex-none transition-all duration-140 ease-oc hover:not-disabled:scale-[1.04] active:not-disabled:scale-[0.96] disabled:bg-hover disabled:text-ink-3 disabled:cursor-not-allowed disabled:opacity-65"
                     :disabled="!canSend"
                     @click="() => submit()"
                     aria-label="发送"
@@ -1231,7 +1250,7 @@ defineExpose({ addFiles });
       <span class="w-[1px] h-3 bg-line-strong mx-[2px]" />
 
       <button
-        class="inline-flex items-center gap-[5px] h-6 px-2 border border-solid border-transparent rounded-[7px] bg-transparent text-ink-2 text-[11.5px] flex-[0_1_auto] min-w-0 max-w-[260px] transition-colors duration-140"
+        class="inline-flex items-center gap-[5px] h-6 px-2 border border-solid border-transparent rounded-[7px] bg-transparent text-ink-2 text-[11.5px] flex-[0_1_auto] min-w-0 max-w-[210px] transition-colors duration-140"
         :class="cwdLocked ? 'cursor-default opacity-65' : 'cursor-pointer hover:bg-surface-2 hover:border-line hover:text-ink'"
         :title="cwdLocked ? '对话开始后不能改工作目录' : cwd"
         :disabled="cwdLocked"
@@ -1256,9 +1275,12 @@ defineExpose({ addFiles });
           root-class="branch-dropdown"
           @open-change="(open: boolean) => { if (open && cwd) void refreshGit(cwd); }"
         >
-          <Tooltip :title="`切换 Git 分支（当前：${currentBranch}）`" :mouse-enter-delay="0.35">
+          <Tooltip
+            :title="worktreeMode ? `切换 Worktree 基准分支（当前：${currentBranch}）` : `切换 Git 分支（当前：${currentBranch}）`"
+            :mouse-enter-delay="0.35"
+          >
             <button
-              class="inline-flex items-center gap-[5px] h-6 px-2 border border-solid border-transparent rounded-[7px] bg-transparent text-ink-2 text-[11.5px] cursor-pointer flex-[0_1_auto] min-w-0 max-w-[190px] transition-colors duration-140 hover:bg-surface-2 hover:border-line hover:text-ink disabled:opacity-60 disabled:cursor-wait"
+              class="inline-flex items-center gap-[5px] h-6 px-2 border border-solid border-transparent rounded-[7px] bg-transparent text-ink-2 text-[11.5px] cursor-pointer flex-[0_1_auto] min-w-0 max-w-[140px] transition-colors duration-140 hover:bg-surface-2 hover:border-line hover:text-ink disabled:opacity-60 disabled:cursor-wait"
               :disabled="switchingBranch"
             >
               <!-- Lucide GitBranch -->
@@ -1276,6 +1298,8 @@ defineExpose({ addFiles });
           </Tooltip>
         </Dropdown>
       </template>
+
+      <slot name="bar-extra" :is-git-repo="isGitRepo" :current-branch="currentBranch" />
     </div>
 
     <input ref="inputFiles" type="file" multiple hidden @change="(e) => addFiles((e.target as HTMLInputElement).files!)" />

@@ -20,6 +20,8 @@ import type {
   SkillInfo,
   TermInfo,
   WorkspaceFileInfo,
+  WorktreeInfo,
+  WorktreeStatus,
   WorkspaceNode,
 } from "./types";
 
@@ -39,6 +41,20 @@ async function call<T>(method: string, ...args: unknown[]): Promise<T> {
 }
 
 export const api = {
+  createWorktree: (agentId: string, repoDir: string, baseBranch = "", branchName = "") =>
+    call<Meta>("CreateWorktree", agentId, repoDir, baseBranch, branchName),
+  attachWorktree: (agentId: string, path: string) => call<Meta>("AttachWorktree", agentId, path),
+  listWorktrees: (repoDir: string) => call<WorktreeInfo[]>("ListWorktrees", repoDir),
+  worktreeStatus: (id: string) => call<WorktreeStatus>("WorktreeStatus", id),
+  mergeWorktree: (id: string, strategy: "merge" | "squash", commitMsg = "", cleanup = false) =>
+    call<void>("MergeWorktree", id, strategy, commitMsg, cleanup),
+  removeWorktree: (id: string, force = false, deleteBranch = false) =>
+    call<void>("RemoveWorktree", id, force, deleteBranch),
+  workspaceCreate: (cwd: string, relPath: string, isDir: boolean) =>
+    call<void>("WorkspaceCreate", cwd, relPath, isDir),
+  workspaceRename: (cwd: string, oldRelPath: string, newRelPath: string) =>
+    call<void>("WorkspaceRename", cwd, oldRelPath, newRelPath),
+  workspaceDelete: (cwd: string, relPath: string) => call<void>("WorkspaceDelete", cwd, relPath),
   bootstrap: () => call<Bootstrap>("Bootstrap"),
   agents: () => call<AgentInfo[]>("Agents"),
   inspectAgentUpdates: (opts: AgentUpdateOptions = {}) => call<AgentUpdateReport>("InspectAgentUpdates", opts),

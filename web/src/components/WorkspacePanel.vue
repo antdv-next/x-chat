@@ -4,8 +4,15 @@ import {
   CloseOutlined,
   CodeOutlined,
   CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
   ExportOutlined,
+  FileAddOutlined,
+  FileTextOutlined,
+  FolderAddOutlined,
+  FolderOpenOutlined,
   FolderOutlined,
+  LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -13,8 +20,8 @@ import {
 } from "@antdv-next/icons";
 import { Folder } from "@antdv-next/x";
 import type { FileContentService, FolderTreeData } from "@antdv-next/x";
-import { App, Spin, Tooltip, message } from "antdv-next";
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { App, Input, Modal, Spin, Tooltip, message } from "antdv-next";
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { VNodeChild } from "vue";
 import { api, inApp } from "../api";
 import { directoryIcons } from "../fileIcons";
@@ -242,6 +249,329 @@ async function openExternally() {
   }
 }
 
+type FileCtxAction =
+  | "newFile"
+  | "newFolder"
+  | "rename"
+  | "delete"
+  | "copyPath"
+  | "copyName"
+  | "reveal"
+  | "openExternal"
+  | "refresh";
+
+const fileCtx = ref<{ open: boolean; x: number; y: number; relPath: string; isDir: boolean }>({
+  open: false,
+  x: 0,
+  y: 0,
+  relPath: "",
+  isDir: false,
+});
+
+type EntryModalMode = "newFile" | "newFolder" | "rename";
+const entryModal = ref<{
+  open: boolean;
+  mode: EntryModalMode;
+  parentDir: string;
+  targetRelPath: string;
+  targetIsDir: boolean;
+  value: string;
+  submitting: boolean;
+}>({
+  open: false,
+  mode: "newFile",
+  parentDir: "",
+  targetRelPath: "",
+  targetIsDir: false,
+  value: "",
+  submitting: false,
+});
+const entryInputRef = ref<{ focus?: () => void; input?: HTMLInputElement } | null>(null);
+
+const entryModalTitle = computed(() => {
+  if (entryModal.value.mode === "newFile") return "新建文件";
+  if (entryModal.value.mode === "newFolder") return "新建文件夹";
+  return entryModal.value.targetIsDir ? "重命名文件夹" : "重命名文件";
+});
+
+const entryModalPlaceholder = computed(() => {
+  if (entryModal.value.mode === "newFile") return "例如 index.ts 或 sub/file.ts";
+  if (entryModal.value.mode === "newFolder") return "例如 components 或 a/b";
+  return "输入新名称";
+});
+
+function parentDirOf(relPath: string): string {
+  const idx = relPath.lastIndexOf("/");
+  return idx >= 0 ? relPath.slice(0, idx) : "";
+}
+
+function expandAncestors(relPath: string, includeSelf = false) {
+  const segs = relPath.split("/").filter(Boolean);
+  const limit = includeSelf ? segs.length : segs.length - 1;
+  if (limit <= 0) return;
+  const merged = new Set(expandedPaths.value);
+  for (let i = 0; i < limit; i++) {
+    merged.add(segs.slice(0, i + 1).join("/"));
+  }
+  expandedPaths.value = Array.from(merged);
+}
+
+function openEntryModal(mode: EntryModalMode, relPath: string, isDir: boolean) {
+  const parentDir = mode === "rename" ? parentDirOf(relPath) : isDir ? relPath : parentDirOf(relPath);
+  const initial = mode === "rename" ? relPath.split("/").pop() || relPath : "";
+  entryModal.value = {
+    open: true,
+    mode,
+    parentDir,
+    targetRelPath: relPath,
+    targetIsDir: isDir,
+    value: initial,
+    submitting: false,
+  };
+  void nextTick(() => {
+    const el = entryInputRef.value?.input;
+    if (el) {
+      el.focus();
+      if (mode === "rename") {
+        const dot = !isDir ? initial.lastIndexOf(".") : -1;
+        el.setSelectionRange(0, dot > 0 ? dot : initial.length);
+      }
+    } else {
+      entryInputRef.value?.focus?.();
+    }
+  });
+}
+
+function normalizeEntryInput(raw: string, allowNested: boolean): string | null {
+  const cleaned = raw.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!cleaned) {
+    message.warning("名称不能为空");
+    return null;
+  }
+  const segs = cleaned.split("/");
+  if (!allowNested && segs.length > 1) {
+    message.warning("名称不能包含路径分隔符 /");
+    return null;
+  }
+  for (const seg of segs) {
+    if (!seg || seg === "." || seg === "..") {
+      message.warning("名称包含无效路径段");
+      return null;
+    }
+    if (seg === ".git") {
+      message.warning("不允许使用 .git 作为名称");
+      return null;
+    }
+  }
+  return segs.join("/");
+}
+
+async function submitEntryModal() {
+  const m = entryModal.value;
+  const cwd = props.cwd;
+  if (!m.open || m.submitting || !cwd) return;
+  const allowNested = m.mode !== "rename";
+  const normInput = normalizeEntryInput(m.value, allowNested);
+  if (!normInput) return;
+
+  const nextRel = m.parentDir ? `${m.parentDir}/${normInput}` : normInput;
+  if (m.mode === "rename" && nextRel === m.targetRelPath) {
+    m.open = false;
+    return;
+  }
+
+  m.submitting = true;
+  try {
+    if (m.mode === "newFile" || m.mode === "newFolder") {
+      const isDir = m.mode === "newFolder";
+      await api.workspaceCreate(cwd, nextRel, isDir);
+      m.open = false;
+      if (props.cwd !== cwd) return;
+      await loadTree();
+      if (props.cwd !== cwd) return;
+      expandAncestors(nextRel, isDir);
+      if (!isDir && !isDirty.value) {
+        selectedFile.value = nextRel.split("/");
+      }
+      message.success(isDir ? `已新建文件夹 ${normInput}` : `已新建文件 ${normInput}`);
+      return;
+    }
+
+    // Rename
+    const oldRel = m.targetRelPath;
+    if (isDirty.value && (activeRelPath.value === oldRel || activeRelPath.value.startsWith(`${oldRel}/`))) {
+      message.warning("请先保存当前文件的更改");
+      return;
+    }
+    await api.workspaceRename(cwd, oldRel, nextRel);
+    m.open = false;
+    if (props.cwd !== cwd) return;
+
+    // Keep expandedPaths & selectedFile in sync with the renamed path.
+    const oldPrefix = `${oldRel}/`;
+    expandedPaths.value = expandedPaths.value.map((p) => {
+      if (p === oldRel) return nextRel;
+      if (p.startsWith(oldPrefix)) return `${nextRel}/${p.slice(oldPrefix.length)}`;
+      return p;
+    });
+    const cur = activeRelPath.value;
+    if (cur === oldRel) {
+      selectedFile.value = nextRel.split("/");
+    } else if (cur.startsWith(oldPrefix)) {
+      selectedFile.value = `${nextRel}/${cur.slice(oldPrefix.length)}`.split("/");
+    }
+
+    await loadTree();
+    message.success(`已重命名为 ${normInput}`);
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    m.submitting = false;
+  }
+}
+
+function confirmDeleteEntry(relPath: string, isDir: boolean) {
+  const cwd = props.cwd;
+  if (!cwd || !relPath) return;
+  modal.confirm({
+    centered: true,
+    title: isDir ? "删除文件夹？" : "删除文件？",
+    content: isDir
+      ? `确定永久删除文件夹「${relPath}」及其所有子文件吗？此操作无法撤销。`
+      : `确定永久删除文件「${relPath}」吗？此操作无法撤销。`,
+    okText: "删除",
+    cancelText: "取消",
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      if (props.cwd !== cwd) return;
+      try {
+        await api.workspaceDelete(cwd, relPath);
+        if (props.cwd !== cwd) return;
+        const prefix = `${relPath}/`;
+        const cur = activeRelPath.value;
+        if (cur === relPath || cur.startsWith(prefix)) {
+          selectedFile.value = [];
+          clearEditorState();
+        }
+        expandedPaths.value = expandedPaths.value.filter((p) => p !== relPath && !p.startsWith(prefix));
+        await loadTree();
+        message.success(`已删除 ${relPath.split("/").pop() || relPath}`);
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : String(e));
+      }
+    },
+  });
+}
+
+function closeFileCtx() {
+  if (fileCtx.value.open) fileCtx.value.open = false;
+}
+
+/** Look up a tree key (a full relative path) in the unfiltered tree. */
+function findWorkspaceNode(relPath: string): WorkspaceNode | null {
+  let list: WorkspaceNode[] | undefined = tree.value;
+  let found: WorkspaceNode | undefined;
+  for (const seg of relPath.split("/").filter(Boolean)) {
+    found = list?.find((n) => n.path === seg || n.title === seg);
+    if (!found) return null;
+    list = found.children;
+  }
+  return found ?? null;
+}
+
+function onTreeContextMenu(e: MouseEvent) {
+  if (e.shiftKey) return;
+  const target = e.target as HTMLElement | null;
+  const row = target?.closest<HTMLElement>(".ant-tree-treenode, [role='treeitem']");
+  const pathEl =
+    target?.closest<HTMLElement>("[data-ws-path]") ??
+    row?.querySelector<HTMLElement>("[data-ws-path]");
+  const relPath = pathEl?.dataset.wsPath ?? "";
+  if (!relPath && !target?.closest(".antd-folder-directory-tree")) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const isDir = !relPath || pathEl?.dataset.wsDir === "1" || Boolean(findWorkspaceNode(relPath)?.children);
+  const actionCount = relPath ? 7 + (inApp ? 1 : 0) + (isDir ? 0 : 1) : 3;
+  fileCtx.value = {
+    open: true,
+    x: Math.max(8, Math.min(e.clientX, window.innerWidth - 168 - 8)),
+    y: Math.max(8, Math.min(e.clientY, window.innerHeight - (actionCount * 32 + 32) - 8)),
+    relPath,
+    isDir,
+  };
+}
+
+function onFileCtxKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") closeFileCtx();
+}
+
+async function onFileCtxAction(action: FileCtxAction) {
+  const { relPath, isDir } = fileCtx.value;
+  closeFileCtx();
+
+  if (action === "newFile" || action === "newFolder") {
+    openEntryModal(action, relPath, isDir);
+    return;
+  }
+
+  if (action === "refresh") {
+    void refreshFiles();
+    return;
+  }
+
+  if (!relPath) return;
+
+  if (action === "rename") {
+    const cur = activeRelPath.value;
+    if (isDirty.value && (cur === relPath || cur.startsWith(`${relPath}/`))) {
+      message.warning("请先保存当前文件的更改再重命名");
+      return;
+    }
+    openEntryModal("rename", relPath, isDir);
+    return;
+  }
+
+  if (action === "delete") {
+    confirmDeleteEntry(relPath, isDir);
+    return;
+  }
+
+  if (action === "copyPath" || action === "copyName") {
+    const text = action === "copyPath" ? relPath : relPath.split("/").pop() || relPath;
+    try {
+      await navigator.clipboard.writeText(text);
+      message.success(action === "copyPath" ? "已复制相对路径" : "已复制文件名");
+    } catch {
+      message.error("复制失败");
+    }
+    return;
+  }
+
+  if (action === "reveal") {
+    const base = props.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+    const abs = base ? `${base}/${relPath}` : relPath;
+    try {
+      await api.reveal(abs);
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e));
+    }
+    return;
+  }
+
+  if (action === "openExternal") {
+    try {
+      if (inApp) {
+        await api.openLink(relPath, props.cwd);
+      } else {
+        const info = await api.workspaceFileInfo(props.cwd, relPath);
+        if (info.url) window.open(info.url, "_blank", "noopener");
+      }
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+}
+
 function renderPreviewTitle(file: { title?: VNodeChild; path: string[] }) {
   const name = file.path[file.path.length - 1] || (typeof file.title === "string" ? file.title : "");
   const showSourceActions =
@@ -411,26 +741,27 @@ function filterNodes(nodes: WorkspaceNode[], q: string): WorkspaceNode[] {
   return out;
 }
 
-function decorateTreeNodes(nodes: WorkspaceNode[]): FolderTreeData[] {
+function decorateTreeNodes(nodes: WorkspaceNode[], parentPath = ""): FolderTreeData[] {
   return nodes.map((n) => {
     const isDir = Array.isArray(n.children);
+    const relPath = parentPath ? `${parentPath}/${n.path}` : n.path;
     const status = n.gitStatus;
-    const title: VNodeChild = status
-      ? h(
-          "span",
-          {
-            class: ["ws-tree-label", `is-git-${status.toLowerCase()}`],
-          },
-          [
-            h("span", { class: "ws-tree-name" }, n.title),
-            !isDir ? h("span", { class: "ws-tree-git-tag" }, status) : null,
-          ],
-        )
-      : n.title;
+    const title: VNodeChild = h(
+      "span",
+      {
+        class: status ? ["ws-tree-label", `is-git-${status.toLowerCase()}`] : "ws-tree-label",
+        "data-ws-path": relPath,
+        "data-ws-dir": isDir ? "1" : undefined,
+      },
+      [
+        h("span", { class: "ws-tree-name" }, n.title),
+        status && !isDir ? h("span", { class: "ws-tree-git-tag" }, status) : null,
+      ],
+    );
     return {
       title,
       path: n.path,
-      children: n.children ? decorateTreeNodes(n.children) : undefined,
+      children: n.children ? decorateTreeNodes(n.children, relPath) : undefined,
     };
   });
 }
@@ -508,6 +839,8 @@ watch(
   ([open, cwd, tab], prev) => {
     const cwdChanged = prev && prev[1] !== cwd;
     if (cwdChanged) {
+      closeFileCtx();
+      entryModal.value.open = false;
       clearEditorState();
       selectedFile.value = [];
       expandedPaths.value = [];
@@ -559,12 +892,18 @@ function onWindowResize() {
 
 onMounted(() => {
   window.addEventListener("resize", onWindowResize);
+  window.addEventListener("pointerdown", closeFileCtx);
+  window.addEventListener("blur", closeFileCtx);
+  window.addEventListener("keydown", onFileCtxKeydown);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", onWindowResize);
   window.removeEventListener("pointermove", onResizeMove);
   window.removeEventListener("pointerup", onResizeEnd);
+  window.removeEventListener("pointerdown", closeFileCtx);
+  window.removeEventListener("blur", closeFileCtx);
+  window.removeEventListener("keydown", onFileCtxKeydown);
 });
 
 async function refreshFiles() {
@@ -599,7 +938,7 @@ async function refreshFiles() {
         <button
           type="button"
           role="tab"
-          class="relative inline-flex items-center gap-[6px] h-full px-[2px] border-0 bg-transparent text-[12.5px] cursor-pointer transition-colors duration-160 ease-xc"
+          class="relative inline-flex items-center gap-[6px] h-full px-[2px] border-0 bg-transparent text-[12.5px] cursor-pointer transition-colors duration-160 ease-oc"
           :class="store.workspaceTab === 'files' ? 'text-ink fw-580' : 'text-ink-3 font-medium hover:text-ink-2'"
           :aria-selected="store.workspaceTab === 'files'"
           @click="store.workspaceTab = 'files'"
@@ -607,14 +946,14 @@ async function refreshFiles() {
           <FolderOutlined />
           <span>文件</span>
           <span
-            class="absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-t-[2px] bg-ink transition-all duration-160 ease-xc"
+            class="absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-t-[2px] bg-ink transition-all duration-160 ease-oc"
             :class="store.workspaceTab === 'files' ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'"
           />
         </button>
         <button
           type="button"
           role="tab"
-          class="relative inline-flex items-center gap-[6px] h-full px-[2px] border-0 bg-transparent text-[12.5px] cursor-pointer transition-colors duration-160 ease-xc"
+          class="relative inline-flex items-center gap-[6px] h-full px-[2px] border-0 bg-transparent text-[12.5px] cursor-pointer transition-colors duration-160 ease-oc"
           :class="store.workspaceTab === 'terminal' ? 'text-ink fw-580' : 'text-ink-3 font-medium hover:text-ink-2'"
           :aria-selected="store.workspaceTab === 'terminal'"
           @click="store.workspaceTab = 'terminal'"
@@ -622,7 +961,7 @@ async function refreshFiles() {
           <CodeOutlined />
           <span>终端</span>
           <span
-            class="absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-t-[2px] bg-ink transition-all duration-160 ease-xc"
+            class="absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-t-[2px] bg-ink transition-all duration-160 ease-oc"
             :class="store.workspaceTab === 'terminal' ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'"
           />
         </button>
@@ -705,6 +1044,7 @@ async function refreshFiles() {
             :preview-title="renderPreviewTitle"
             :preview-render="renderPreview"
             @selected-file-change="onSelectedFileChange"
+            @contextmenu="onTreeContextMenu"
           />
         </div>
       </div>
@@ -718,5 +1058,120 @@ async function refreshFiles() {
         />
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="fileCtx.open"
+        class="fixed z-[2100] min-w-[156px] p-[5px] rounded-[11px] bg-surface-strong glass border border-solid border-line-strong shadow-pop flex flex-col gap-[2px] select-none"
+        :style="{ left: `${fileCtx.x}px`, top: `${fileCtx.y}px` }"
+        @pointerdown.stop
+        @contextmenu.prevent.stop
+      >
+        <button
+          type="button"
+          class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+          @click="onFileCtxAction('newFile')"
+        >
+          <FileAddOutlined class="text-[13px] text-ink-3" />
+          <span>新建文件</span>
+        </button>
+        <button
+          type="button"
+          class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+          @click="onFileCtxAction('newFolder')"
+        >
+          <FolderAddOutlined class="text-[13px] text-ink-3" />
+          <span>新建文件夹</span>
+        </button>
+        <template v-if="fileCtx.relPath">
+          <div class="h-[1px] bg-line my-[3px] mx-[6px]" />
+          <button
+            type="button"
+            class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+            @click="onFileCtxAction('rename')"
+          >
+            <EditOutlined class="text-[13px] text-ink-3" />
+            <span>重命名</span>
+          </button>
+          <button
+            type="button"
+            class="w-full border-0 bg-transparent text-err text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-err-soft"
+            @click="onFileCtxAction('delete')"
+          >
+            <DeleteOutlined class="text-[13px]" />
+            <span>删除</span>
+          </button>
+          <div class="h-[1px] bg-line my-[3px] mx-[6px]" />
+          <button
+            type="button"
+            class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+            @click="onFileCtxAction('copyPath')"
+          >
+            <LinkOutlined class="text-[13px] text-ink-3" />
+            <span>复制相对路径</span>
+          </button>
+          <button
+            type="button"
+            class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+            @click="onFileCtxAction('copyName')"
+          >
+            <FileTextOutlined class="text-[13px] text-ink-3" />
+            <span>复制文件名</span>
+          </button>
+          <button
+            v-if="inApp"
+            type="button"
+            class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+            @click="onFileCtxAction('reveal')"
+          >
+            <FolderOpenOutlined class="text-[13px] text-ink-3" />
+            <span>在访达中显示</span>
+          </button>
+          <button
+            v-if="!fileCtx.isDir"
+            type="button"
+            class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+            @click="onFileCtxAction('openExternal')"
+          >
+            <ExportOutlined class="text-[13px] text-ink-3" />
+            <span>{{ inApp ? "用默认程序打开" : "在新标签页打开" }}</span>
+          </button>
+        </template>
+        <div class="h-[1px] bg-line my-[3px] mx-[6px]" />
+        <button
+          type="button"
+          class="w-full border-0 bg-transparent text-ink text-[12.5px] text-left px-[10px] py-[6px] rounded-[7px] cursor-pointer inline-flex items-center gap-2 transition-colors duration-120 hover:bg-hover"
+          @click="onFileCtxAction('refresh')"
+        >
+          <ReloadOutlined class="text-[13px] text-ink-3" />
+          <span>刷新目录</span>
+        </button>
+      </div>
+    </Teleport>
+
+    <Modal
+      :open="entryModal.open"
+      :title="entryModalTitle"
+      :width="380"
+      :confirm-loading="entryModal.submitting"
+      ok-text="确定"
+      cancel-text="取消"
+      centered
+      @ok="submitEntryModal"
+      @cancel="entryModal.open = false"
+    >
+      <div class="flex flex-col gap-2 pt-1">
+        <div class="text-[11.5px] text-ink-3 font-mono truncate" :title="entryModal.parentDir || shortFolder">
+          位置：{{ entryModal.parentDir ? `${shortFolder}/${entryModal.parentDir}` : shortFolder }}
+        </div>
+        <Input
+          ref="entryInputRef"
+          v-model:value="entryModal.value"
+          :placeholder="entryModalPlaceholder"
+          :disabled="entryModal.submitting"
+          @press-enter="submitEntryModal"
+        />
+      </div>
+    </Modal>
   </aside>
 </template>

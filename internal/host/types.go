@@ -68,16 +68,20 @@ type preset struct {
 
 // Meta describes a conversation in the sidebar.
 type Meta struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	TitleLocked bool   `json:"titleLocked,omitempty"`
-	AgentID     string `json:"agentId"`
-	AgentName   string `json:"agentName"`
-	Cwd         string `json:"cwd"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
-	Pinned      bool   `json:"pinned,omitempty"`
-	Archived    bool   `json:"archived,omitempty"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	TitleLocked    bool   `json:"titleLocked,omitempty"`
+	AgentID        string `json:"agentId"`
+	AgentName      string `json:"agentName"`
+	Cwd            string `json:"cwd"`
+	Worktree       bool   `json:"worktree,omitempty"`
+	WorktreeRepo   string `json:"worktreeRepo,omitempty"`
+	WorktreeBranch string `json:"worktreeBranch,omitempty"`
+	WorktreeBase   string `json:"worktreeBase,omitempty"`
+	CreatedAt      int64  `json:"createdAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
+	Pinned         bool   `json:"pinned,omitempty"`
+	Archived       bool   `json:"archived,omitempty"`
 	// AcpSessionID is the agent's own session id, to resume with session/load.
 	AcpSessionID string `json:"acpSessionId,omitempty"`
 	// ModelConfigID/ModelValue remember the model picked for this conversation.
@@ -211,15 +215,15 @@ type TermExit struct {
 
 // Bootstrap is everything the page needs to draw its first frame.
 type Bootstrap struct {
-	Version       string     `json:"version"`
-	Platform      string     `json:"platform"`
-	Mode          string     `json:"mode"` // desktop | web
-	Home          string     `json:"home"`
-	Settings      Settings   `json:"settings"`
+	Version       string      `json:"version"`
+	Platform      string      `json:"platform"`
+	Mode          string      `json:"mode"` // desktop | web
+	Home          string      `json:"home"`
+	Settings      Settings    `json:"settings"`
 	Agents        []AgentInfo `json:"agents"`
-	Conversations []Meta     `json:"conversations"`
-	NodeVersion   string     `json:"nodeVersion"`
-	NodeError     string     `json:"nodeError,omitempty"`
+	Conversations []Meta      `json:"conversations"`
+	NodeVersion   string      `json:"nodeVersion"`
+	NodeError     string      `json:"nodeError,omitempty"`
 }
 
 // DirListing is one directory of the folder picker.
@@ -235,6 +239,29 @@ type GitInfo struct {
 	IsRepo   bool     `json:"isRepo"`
 	Branch   string   `json:"branch"`
 	Branches []string `json:"branches"`
+}
+
+type WorktreeFileChange struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+}
+
+type WorktreeInfo struct {
+	Path         string `json:"path"`
+	Branch       string `json:"branch"`
+	IsMain       bool   `json:"isMain"`
+	Dirty        bool   `json:"dirty"`
+	ChangedCount int    `json:"changedCount"`
+}
+
+type WorktreeStatus struct {
+	Exists       bool                 `json:"exists"`
+	Dirty        bool                 `json:"dirty"`
+	ChangedCount int                  `json:"changedCount"`
+	AheadCount   int                  `json:"aheadCount"`
+	Branch       string               `json:"branch"`
+	BaseBranch   string               `json:"baseBranch"`
+	ChangedFiles []WorktreeFileChange `json:"changedFiles"`
 }
 
 // Block is one piece of a user's message (ACP ContentBlock).

@@ -9,7 +9,7 @@
   </p>
 </div>
 
-X-Chat 是一个本地优先的桌面与 Web 工作台。它通过 [Agent Client Protocol（ACP）](https://agentclientprotocol.com) 连接本机已安装的 Claude Code、Codex、Pi、Oh My Pi，也支持自定义编程 Agent。
+X-Chat 是一个本地优先的桌面与 Web 工作台。它通过 [Agent Client Protocol（ACP）](https://agentclientprotocol.com) 连接本机已安装的 Claude Code、Codex、OpenCode、Pi、Oh My Pi，也支持自定义编程 Agent。
 
 <p align="center">
   <img src="docs/screenshots/hero-light.png" alt="对话中的执行计划、工具调用和代码输出" width="88%" />
@@ -39,6 +39,12 @@ x-chat serve                                          # 本机 4310 端口，随
 x-chat serve -addr 0.0.0.0:4310 -token '<your-token>'  # 允许局域网访问
 x-chat serve -no-auth                                 # 用于本地开发
 ```
+
+## Git Worktree
+
+在 Git 仓库中，新对话底栏可启用 **Worktree**，创建隔离分支或挂接已有 Worktree。点击会话顶部的 Worktree 分支可查看改动、合并或压缩合入，以及清理。删除对话时默认保留 Worktree，勾选后才一并清理。
+
+工作区文件树支持通过右键菜单新建、重命名和删除文件或文件夹。
 
 ## 架构
 

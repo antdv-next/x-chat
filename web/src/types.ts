@@ -53,6 +53,10 @@ export interface Meta {
   agentId: string;
   agentName: string;
   cwd: string;
+  worktree?: boolean;
+  worktreeRepo?: string;
+  worktreeBranch?: string;
+  worktreeBase?: string;
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
@@ -197,6 +201,29 @@ export interface GitInfo {
   isRepo: boolean;
   branch: string;
   branches: string[];
+}
+
+export interface WorktreeFileChange {
+  path: string;
+  status: "M" | "A" | "D" | "R" | "?";
+}
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  isMain: boolean;
+  dirty: boolean;
+  changedCount: number;
+}
+
+export interface WorktreeStatus {
+  exists: boolean;
+  dirty: boolean;
+  changedCount: number;
+  aheadCount: number;
+  branch: string;
+  baseBranch: string;
+  changedFiles: WorktreeFileChange[];
 }
 
 export interface AgentUpdateProgress {
