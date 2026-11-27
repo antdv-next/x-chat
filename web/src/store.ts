@@ -21,6 +21,8 @@ const idleLive = (): LiveState => ({
   resumed: false,
 });
 
+const initialStoredCwd = localStorage.getItem("x-chat.cwd");
+
 export const store = reactive({
   ready: false,
   bootError: "",
@@ -37,8 +39,10 @@ export const store = reactive({
   queues: {} as Record<string, QueuedMessage[]>,
   /** The open conversation; null shows the new-conversation screen. */
   activeId: null as string | null,
-  /** Working directory currently shown in the UI; new conversations start here. */
-  currentCwd: localStorage.getItem("x-chat.cwd") || "",
+  /** Working directory currently shown in the UI; "" means no workspace attached. */
+  currentCwd: initialStoredCwd ?? "",
+  /** Whether the user has an explicit working-directory preference (including ""). */
+  cwdInitialized: initialStoredCwd !== null,
   /** Optional one-shot agent hint when opening NewChat from an existing conversation. */
   preferredAgentId: "" as string,
   loading: {} as Record<string, boolean>,
@@ -119,8 +123,8 @@ watch(
 watch(
   () => store.currentCwd,
   (v) => {
-    if (v) localStorage.setItem("x-chat.cwd", v);
-    else localStorage.removeItem("x-chat.cwd");
+    store.cwdInitialized = true;
+    localStorage.setItem("x-chat.cwd", v);
   },
 );
 
@@ -271,9 +275,11 @@ watch(
 // -------------------------------------------------------------- selectors
 
 export const activeMeta = computed(() => (store.activeId ? store.metas[store.activeId] ?? null : null));
-export const activeWorkspaceCwd = computed(
-  () => activeMeta.value?.cwd || store.currentCwd || store.settings?.recentDirs?.[0] || store.boot?.home || "",
-);
+export const activeWorkspaceCwd = computed(() => {
+  if (activeMeta.value) return activeMeta.value.cwd || "";
+  if (store.cwdInitialized) return store.currentCwd || "";
+  return store.currentCwd || store.settings?.recentDirs?.[0] || "";
+});
 export const activeLive = computed(() => (store.activeId ? store.lives[store.activeId] ?? idleLive() : idleLive()));
 export const activeTranscript = computed(() => (store.activeId ? store.transcripts[store.activeId] ?? null : null));
 
@@ -465,7 +471,7 @@ export async function probeModels(agentId: string, cwd = "", force = false) {
   store.probingModels[agentId] = true;
   delete store.probeErrors[agentId];
   try {
-    const opts = await api.probeModels(agentId, cwd || store.boot?.home || "");
+    const opts = await api.probeModels(agentId, cwd);
     captureModels(agentId, opts);
   } catch (e) {
     store.probeErrors[agentId] = e instanceof Error ? e.message : String(e);
@@ -482,7 +488,7 @@ export async function refreshModels(agentId: string, cwd = "") {
   store.probingModels[agentId] = true;
   delete store.probeErrors[agentId];
   try {
-    const opts = await api.refreshModels(agentId, cwd || store.boot?.home || "");
+    const opts = await api.refreshModels(agentId, cwd);
     captureModels(agentId, opts);
     // Also update the active conversation's live model option so refreshing inside an existing chat takes effect immediately.
     const freshModel = store.cachedModels[agentId];
@@ -532,8 +538,9 @@ export async function select(id: string | null) {
   }
   if (id && !store.transcripts[id]) await load(id);
   const meta = id ? store.metas[id] : null;
-  const cwd = meta ? meta.worktreeRepo || meta.cwd : "";
-  if (cwd) store.currentCwd = cwd;
+  if (meta) {
+    store.currentCwd = meta.worktreeRepo || meta.cwd || "";
+  }
 }
 
 export function newConversation() {
@@ -541,7 +548,7 @@ export function newConversation() {
 }
 
 export function newConversationInDir(dir: string, agentId?: string) {
-  if (dir) store.currentCwd = dir;
+  store.currentCwd = dir;
   if (agentId) store.preferredAgentId = agentId;
   void select(null);
 }
@@ -622,6 +629,7 @@ export interface WorktreeLaunchOptions {
   enabled: boolean;
   baseBranch?: string;
   branchName?: string;
+  detach?: boolean;
   existingPath?: string;
 }
 
@@ -638,11 +646,12 @@ export async function start(
   initialModel?: { configId: string; value: string } | null,
   worktree?: WorktreeLaunchOptions | null,
 ) {
-  const meta = worktree?.enabled
-    ? worktree.existingPath
-      ? await api.attachWorktree(agentId, worktree.existingPath)
-      : await api.createWorktree(agentId, cwd, worktree.baseBranch ?? "", worktree.branchName ?? "")
-    : await api.create(agentId, cwd);
+  const meta =
+    worktree?.enabled && (worktree.existingPath || cwd)
+      ? worktree.existingPath
+        ? await api.attachWorktree(agentId, worktree.existingPath)
+        : await api.createWorktree(agentId, cwd, worktree.baseBranch ?? "", worktree.branchName ?? "", Boolean(worktree.detach))
+      : await api.create(agentId, cwd);
   startingIds.add(meta.id);
   try {
     if (!store.metas[meta.id]) store.metas[meta.id] = meta;

@@ -1,7 +1,9 @@
 package host
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -93,6 +95,7 @@ func TestArchivePersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(st.flush)
 	st.create(Meta{ID: "c1", Title: "hello", AgentID: "codex", AgentName: "Codex", Cwd: dir, CreatedAt: 1, UpdatedAt: 1})
 	h := &Host{store: st, opts: Options{Push: func(Push) {}}, lives: map[string]*live{}}
 	api := NewAPI(h)
@@ -175,5 +178,45 @@ func TestCodeBuddyEnvCompatibility(t *testing.T) {
 	gotUnset := hNoRegion.effectiveAgentEnv(AgentInfo{ID: "codebuddy"})
 	if v, ok := gotUnset["CODEBUDDY_INTERNET_ENVIRONMENT"]; !ok || v != "" {
 		t.Fatalf("unset env = %#v, want explicit empty unset signal", gotUnset)
+	}
+}
+
+func TestCreateWithoutWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+	st, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.flush)
+	h := &Host{
+		store:     st,
+		opts:      Options{DataDir: dir, Push: func(Push) {}},
+		envLoaded: true,
+		env:       os.Environ(),
+		presets:   []preset{{ID: "codex", Name: "Codex", Command: "codex", Probe: "codex"}},
+		lives:     map[string]*live{},
+	}
+
+	m, err := h.create("codex", "")
+	if err != nil {
+		t.Fatalf("create with empty cwd failed: %v", err)
+	}
+	if m.Cwd != "" {
+		t.Fatalf("expected empty Cwd, got %q", m.Cwd)
+	}
+	if len(h.settings.RecentDirs) != 0 {
+		t.Fatalf("expected RecentDirs to remain empty, got %v", h.settings.RecentDirs)
+	}
+	if h.settings.DefaultAgent != "codex" {
+		t.Fatalf("expected DefaultAgent=codex, got %q", h.settings.DefaultAgent)
+	}
+
+	scratch := h.scratchDir()
+	wantScratch := filepath.Join(dir, "scratch")
+	if scratch != wantScratch {
+		t.Fatalf("scratchDir = %q, want %q", scratch, wantScratch)
+	}
+	if info, err := os.Stat(scratch); err != nil || !info.IsDir() {
+		t.Fatalf("scratch dir not created: %v", err)
 	}
 }

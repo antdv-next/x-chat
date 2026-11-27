@@ -3,6 +3,7 @@ import { Conversations } from "@antdv-next/x";
 import type { ConversationItemType } from "@antdv-next/x";
 import {
   ArrowLeftOutlined,
+  CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   InboxOutlined,
@@ -30,6 +31,7 @@ const newTitle = ref("");
 const renameInput = ref<{ focus: () => void } | null>(null);
 const toDelete = ref<Meta | null>(null);
 const deleteWithWorktree = ref(true);
+const deleteWithBranch = ref(false);
 const deleteBusy = ref(false);
 const showArchived = ref(false);
 
@@ -40,6 +42,7 @@ const lastSelectedId = ref<string | null>(null);
 const batchArchiveOpen = ref(false);
 const batchDeleteOpen = ref(false);
 const batchDeleteWithWorktree = ref(true);
+const batchDeleteWithBranch = ref(false);
 const batchBusy = ref(false);
 
 const convCtx = ref<{ open: boolean; x: number; y: number; meta: Meta | null }>({
@@ -273,6 +276,16 @@ function shortDir(cwd: string) {
   return cwd.split("/").filter(Boolean).pop() || cwd;
 }
 
+async function copyPath(path: string) {
+  if (!path) return;
+  try {
+    await navigator.clipboard.writeText(path);
+    message.success("已复制目录路径");
+  } catch {
+    message.error("复制失败");
+  }
+}
+
 function statusNodeFor(m: Meta) {
   const status = store.lives[m.id]?.status ?? m.status;
   const outcome = store.turnOutcome[m.id];
@@ -421,11 +434,17 @@ async function confirmRename() {
 }
 
 watch(toDelete, (m) => {
-  if (m) deleteWithWorktree.value = Boolean(m.worktree);
+  if (m) {
+    deleteWithWorktree.value = Boolean(m.worktree);
+    deleteWithBranch.value = false;
+  }
 });
 
 watch(batchDeleteOpen, (open) => {
-  if (open) batchDeleteWithWorktree.value = selectedWorktreeCount.value > 0;
+  if (open) {
+    batchDeleteWithWorktree.value = selectedWorktreeCount.value > 0;
+    batchDeleteWithBranch.value = false;
+  }
 });
 
 async function confirmDelete() {
@@ -434,7 +453,7 @@ async function confirmDelete() {
   deleteBusy.value = true;
   try {
     if (m.worktree && deleteWithWorktree.value) {
-      await removeWorktree(m.id, true, true);
+      await removeWorktree(m.id, true, deleteWithBranch.value);
     }
     toDelete.value = null;
     await remove(m.id);
@@ -476,6 +495,7 @@ async function confirmBatchArchive() {
 async function confirmBatchDelete() {
   const ids = [...visibleSelectedIds.value];
   const removeWts = batchDeleteWithWorktree.value;
+  const removeBranches = removeWts && batchDeleteWithBranch.value;
   batchDeleteOpen.value = false;
   if (!ids.length || batchBusy.value) return;
   batchBusy.value = true;
@@ -483,7 +503,7 @@ async function confirmBatchDelete() {
     const results = await Promise.allSettled(
       ids.map(async (id) => {
         if (removeWts && store.metas[id]?.worktree) {
-          await removeWorktree(id, true, true);
+          await removeWorktree(id, true, removeBranches);
         }
         await remove(id);
       }),
@@ -896,29 +916,50 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
     <Modal
       :open="Boolean(toDelete)"
       title="删除这个对话？"
-      :width="380"
+      :width="400"
       centered
       ok-text="删除"
-      ok-type="danger"
+      ok-type="primary"
+      :ok-button-props="{ danger: true }"
       cancel-text="取消"
       :confirm-loading="deleteBusy"
       @ok="confirmDelete"
       @cancel="toDelete = null"
     >
-      <div class="flex flex-col gap-2.5">
-        <p class="text-ink-2 m-0">
+      <div class="flex flex-col gap-3 pt-1">
+        <p class="text-[12.5px] text-ink-2 leading-[1.55] m-0">
           「{{ toDelete?.title }}」的记录会从本机删除，无法恢复。agent 那边的会话不受影响。
         </p>
-        <div v-if="toDelete?.worktree" class="flex flex-col gap-2 pt-2 border-0 border-t border-solid border-line">
+        <div
+          v-if="toDelete?.worktree"
+          class="rounded-[10px] bg-surface-2 border border-solid border-line px-3 py-2.5 flex flex-col gap-2"
+        >
           <Checkbox v-model:checked="deleteWithWorktree">
-            <span class="text-[12.5px] text-ink">同时删除关联的 Worktree 目录与临时分支</span>
+            <span class="text-[12.5px] text-ink">同时删除关联的 Worktree 目录</span>
           </Checkbox>
-          <div v-if="deleteWithWorktree" class="pl-6 flex flex-col gap-1">
-            <div class="px-2 py-1.5 rounded-[7px] bg-surface-2 border border-solid border-line font-mono text-[11px] text-ink-2 break-all leading-[1.45]">
-              {{ toDelete.cwd }}
+          <div v-if="deleteWithWorktree" class="pl-6 flex flex-col gap-1.5">
+            <Checkbox v-if="toDelete.worktreeBranch" v-model:checked="deleteWithBranch">
+              <span class="text-[12px] text-ink-2">
+                同时删除分支 <code class="font-mono text-ink">{{ toDelete.worktreeBranch }}</code>
+              </span>
+            </Checkbox>
+            <div class="flex items-start gap-1.5">
+              <span class="font-mono text-[11px] text-ink-3 break-all leading-[1.45] flex-1">
+                {{ toDelete.cwd }}
+              </span>
+              <Tooltip title="复制目录路径" :mouse-enter-delay="0.3">
+                <button
+                  type="button"
+                  class="inline-grid place-items-center w-5 h-5 border-0 rounded-[5px] bg-transparent text-ink-3 cursor-pointer flex-none transition-colors duration-120 hover:bg-hover hover:text-ink"
+                  aria-label="复制目录路径"
+                  @click="copyPath(toDelete.cwd)"
+                >
+                  <CopyOutlined class="text-[11px]" />
+                </button>
+              </Tooltip>
             </div>
-            <div class="text-[11px] text-warn leading-[1.4]">
-              若该目录内存在未提交的代码改动，删除后将永久丢失。
+            <div class="text-[11px] text-ink-3 leading-[1.4]">
+              若该目录存在未提交的代码改动，删除后将无法恢复。
             </div>
           </div>
         </div>
@@ -948,26 +989,33 @@ const needsNode = computed(() => Boolean(store.boot?.nodeError));
     <Modal
       :open="batchDeleteOpen"
       :title="`删除选中的 ${selectedCount} 个对话？`"
-      :width="380"
+      :width="400"
       centered
       ok-text="删除"
-      ok-type="danger"
+      ok-type="primary"
+      :ok-button-props="{ danger: true }"
       cancel-text="取消"
       :confirm-loading="batchBusy"
       @ok="confirmBatchDelete"
       @cancel="batchDeleteOpen = false"
     >
-      <div class="flex flex-col gap-2.5">
-        <p class="text-ink-2 m-0">
+      <div class="flex flex-col gap-3 pt-1">
+        <p class="text-[12.5px] text-ink-2 leading-[1.55] m-0">
           这些对话的记录会从本机永久删除，无法恢复。agent 那边的会话不受影响。
         </p>
         <ul v-if="selectedMetasPreview.length" class="m-0 pl-4 text-[12px] text-ink-3 flex flex-col gap-[3px]">
           <li v-for="m in selectedMetasPreview" :key="m.id" class="truncate">{{ m.title || '新对话' }}</li>
           <li v-if="selectedCount > selectedMetasPreview.length" class="list-none -ml-4 text-ink-3">等共 {{ selectedCount }} 个对话</li>
         </ul>
-        <div v-if="selectedWorktreeCount > 0" class="pt-2 border-0 border-t border-solid border-line">
+        <div
+          v-if="selectedWorktreeCount > 0"
+          class="rounded-[10px] bg-surface-2 border border-solid border-line px-3 py-2.5 flex flex-col gap-1.5"
+        >
           <Checkbox v-model:checked="batchDeleteWithWorktree">
-            <span class="text-[12.5px] text-ink">同时删除关联的 {{ selectedWorktreeCount }} 个 Worktree 目录与临时分支</span>
+            <span class="text-[12.5px] text-ink">同时删除关联的 {{ selectedWorktreeCount }} 个 Worktree 目录</span>
+          </Checkbox>
+          <Checkbox v-if="batchDeleteWithWorktree" v-model:checked="batchDeleteWithBranch" class="pl-6">
+            <span class="text-[12px] text-ink-2">同时删除关联分支</span>
           </Checkbox>
         </div>
       </div>

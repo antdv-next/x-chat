@@ -155,7 +155,24 @@ func copyWorktreeFile(source, target *os.Root, path string, mode os.FileMode) er
 	return err
 }
 
-func (h *Host) createWithWorktree(ctx context.Context, agentID, repoDir, baseBranch, branchName string) (Meta, error) {
+func (h *Host) isBranchCheckedOut(ctx context.Context, mainRepo, branch string) bool {
+	if branch == "" || branch == "HEAD" {
+		return true
+	}
+	out, err := h.runGit(ctx, mainRepo, "worktree", "list", "--porcelain")
+	if err != nil || out == "" {
+		return false
+	}
+	want := "branch refs/heads/" + branch
+	for _, rawLine := range strings.Split(out, "\n") {
+		if strings.TrimSpace(rawLine) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Host) createWithWorktree(ctx context.Context, agentID, repoDir, baseBranch, branchName string, detach bool) (Meta, error) {
 	h.worktreeMu.Lock()
 	defer h.worktreeMu.Unlock()
 	a, ok := h.agent(agentID)
@@ -184,19 +201,26 @@ func (h *Host) createWithWorktree(ctx context.Context, agentID, repoDir, baseBra
 		return Meta{}, errors.New("无效的基准分支名")
 	}
 
-	branch := strings.TrimSpace(branchName)
-	if branch == "" {
-		branch = "wt/" + shortWorktreeToken()
+	var branch string
+	var dirSlug string
+	if !detach {
+		branch = strings.TrimSpace(branchName)
+		if branch == "" {
+			branch = "wt/" + shortWorktreeToken()
+		} else {
+			if strings.HasPrefix(branch, "-") {
+				return Meta{}, errors.New("无效的分支名")
+			}
+			if _, err := h.runGit(ctx, mainRepo, "check-ref-format", "--branch", branch); err != nil {
+				return Meta{}, fmt.Errorf("分支名格式无效：%s", branch)
+			}
+		}
+		if _, err := h.runGit(ctx, mainRepo, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+			return Meta{}, fmt.Errorf("分支 %s 已存在，请换一个分支名", branch)
+		}
+		dirSlug = sanitizeWorktreeSegment(strings.TrimPrefix(branch, "wt/"))
 	} else {
-		if strings.HasPrefix(branch, "-") {
-			return Meta{}, errors.New("无效的分支名")
-		}
-		if _, err := h.runGit(ctx, mainRepo, "check-ref-format", "--branch", branch); err != nil {
-			return Meta{}, fmt.Errorf("分支名格式无效：%s", branch)
-		}
-	}
-	if _, err := h.runGit(ctx, mainRepo, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
-		return Meta{}, fmt.Errorf("分支 %s 已存在，请换一个分支名", branch)
+		dirSlug = sanitizeWorktreeSegment(baseRef + "-" + shortWorktreeToken())
 	}
 
 	wtBase, err := filepath.Abs(filepath.Join(h.opts.DataDir, "worktrees"))
@@ -204,7 +228,6 @@ func (h *Host) createWithWorktree(ctx context.Context, agentID, repoDir, baseBra
 		return Meta{}, err
 	}
 	repoSlug := sanitizeWorktreeSegment(filepath.Base(mainRepo))
-	dirSlug := sanitizeWorktreeSegment(strings.TrimPrefix(branch, "wt/"))
 	repoBucket := filepath.Join(wtBase, repoSlug)
 	if err := os.MkdirAll(repoBucket, 0o755); err != nil {
 		return Meta{}, fmt.Errorf("创建 Worktree 目录失败：%w", err)
@@ -215,8 +238,28 @@ func (h *Host) createWithWorktree(ctx context.Context, agentID, repoDir, baseBra
 		wtPath = filepath.Join(repoBucket, dirSlug+"-"+shortWorktreeToken())
 	}
 
-	if _, err := h.runGit(ctx, mainRepo, "worktree", "add", "-b", branch, wtPath, baseRef); err != nil {
-		return Meta{}, fmt.Errorf("创建 Worktree 失败：%w", err)
+	// Prune stale metadata before creating a new worktree.
+	_, _ = h.runGit(ctx, mainRepo, "worktree", "prune")
+	if detach {
+		isLocalBranch := baseRef != "HEAD" && func() bool {
+			_, err := h.runGit(ctx, mainRepo, "show-ref", "--verify", "--quiet", "refs/heads/"+baseRef)
+			return err == nil
+		}()
+		if isLocalBranch && !h.isBranchCheckedOut(ctx, mainRepo, baseRef) {
+			if _, err := h.runGit(ctx, mainRepo, "worktree", "add", wtPath, baseRef); err != nil {
+				return Meta{}, fmt.Errorf("创建 Worktree 失败：%w", err)
+			}
+			branch = baseRef
+		} else {
+			if _, err := h.runGit(ctx, mainRepo, "worktree", "add", "--detach", wtPath, baseRef); err != nil {
+				return Meta{}, fmt.Errorf("创建 Worktree 失败：%w", err)
+			}
+			branch = ""
+		}
+	} else {
+		if _, err := h.runGit(ctx, mainRepo, "worktree", "add", "-b", branch, wtPath, baseRef); err != nil {
+			return Meta{}, fmt.Errorf("创建 Worktree 失败：%w", err)
+		}
 	}
 
 	copied := copyWorktreeIncludes(mainRepo, wtPath)
@@ -430,22 +473,29 @@ func (h *Host) worktreeMergeBase(ctx context.Context, wtDir, baseBranch string) 
 }
 
 func (h *Host) parseDiffNameStatus(ctx context.Context, dir, baseRef string) []WorktreeFileChange {
-	out, err := h.runGit(ctx, dir, "diff", "--name-status", baseRef)
+	out, err := h.runGitRaw(ctx, dir, "diff", "--name-status", "-z", baseRef)
 	if err != nil || out == "" {
 		return []WorktreeFileChange{}
 	}
 	files := []WorktreeFileChange{}
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	parts := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(parts); {
+		code := parts[i]
+		if code == "" {
+			i++
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 2 {
-			continue
+		var p string
+		if strings.HasPrefix(code, "R") || strings.HasPrefix(code, "C") {
+			if i+2 >= len(parts) {
+				break
+			}
+			p = parts[i+2]
+			i += 3
+		} else {
+			p = parts[i+1]
+			i += 2
 		}
-		code := parts[0]
-		p := parts[len(parts)-1]
 		st := "M"
 		switch {
 		case strings.HasPrefix(code, "A"):

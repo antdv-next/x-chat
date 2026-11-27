@@ -133,8 +133,12 @@ func (a *API) Create(agentID, cwd string) (Meta, error) {
 	return m, nil
 }
 
-func (a *API) CreateWorktree(ctx context.Context, agentID, repoDir, baseBranch, branchName string) (Meta, error) {
-	meta, err := a.h.createWithWorktree(context.WithoutCancel(ctx), agentID, repoDir, baseBranch, branchName)
+// CreateWorktree creates an isolated git worktree for repoDir and starts a new
+// conversation rooted in that worktree. When detach is true, no new branch is
+// created: an unchecked-out local baseBranch is checked out directly, otherwise
+// a detached HEAD worktree is created at baseBranch.
+func (a *API) CreateWorktree(ctx context.Context, agentID, repoDir, baseBranch, branchName string, detach bool) (Meta, error) {
+	meta, err := a.h.createWithWorktree(context.WithoutCancel(ctx), agentID, repoDir, baseBranch, branchName, detach)
 	if err == nil {
 		go func() { _, _ = a.h.connect(context.Background(), meta.ID) }()
 	}
@@ -338,6 +342,11 @@ func (a *API) GitCheckout(ctx context.Context, path, branch string) (GitInfo, er
 // GitCreateBranch creates a new local branch at HEAD in path, checks it out, and returns updated info.
 func (a *API) GitCreateBranch(ctx context.Context, path, branch string) (GitInfo, error) {
 	return a.h.gitCreateBranch(ctx, path, branch)
+}
+
+// GitDeleteBranch deletes a local branch in path and returns updated info.
+func (a *API) GitDeleteBranch(ctx context.Context, path, branch string, force bool) (GitInfo, error) {
+	return a.h.gitDeleteBranch(ctx, path, branch, force)
 }
 
 // PickFolder shows the system's folder dialog; "" when canceled or unavailable.

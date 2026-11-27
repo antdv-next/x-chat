@@ -355,13 +355,21 @@ export const Host = {
    * connects it in the background, so its modes and models show up quickly.
    */
   create: bind<[string, string], Meta>("Host.Create", (agentID: string, cwd: string) => [agentID, cwd]),
-  createWorktree: bind<[string, string, string, string], Meta>("Host.CreateWorktree", (agentID: string, repoDir: string, baseBranch: string, branchName: string) => [agentID, repoDir, baseBranch, branchName]),
+  /**
+   * CreateWorktree creates an isolated git worktree for repoDir and starts a new
+   * conversation rooted in that worktree. When detach is true, no new branch is
+   * created: an unchecked-out local baseBranch is checked out directly, otherwise
+   * a detached HEAD worktree is created at baseBranch.
+   */
+  createWorktree: bind<[string, string, string, string, boolean], Meta>("Host.CreateWorktree", (agentID: string, repoDir: string, baseBranch: string, branchName: string, detach: boolean) => [agentID, repoDir, baseBranch, branchName, detach]),
   /** Delete removes a conversation and ends its session. */
   delete: bind<[string], void>("Host.Delete", (id: string) => [id]),
   /** GitCheckout switches the git repository at path to branch and returns updated info. */
   gitCheckout: bind<[string, string], GitInfo>("Host.GitCheckout", (path: string, branch: string) => [path, branch]),
   /** GitCreateBranch creates a new local branch at HEAD in path, checks it out, and returns updated info. */
   gitCreateBranch: bind<[string, string], GitInfo>("Host.GitCreateBranch", (path: string, branch: string) => [path, branch]),
+  /** GitDeleteBranch deletes a local branch in path and returns updated info. */
+  gitDeleteBranch: bind<[string, string, boolean], GitInfo>("Host.GitDeleteBranch", (path: string, branch: string, force: boolean) => [path, branch, force]),
   /** GitInfo returns the current git branch and local branches for path. */
   gitInfo: bind<[string], GitInfo>("Host.GitInfo", (path: string) => [path]),
   /**

@@ -41,8 +41,8 @@ async function call<T>(method: string, ...args: unknown[]): Promise<T> {
 }
 
 export const api = {
-  createWorktree: (agentId: string, repoDir: string, baseBranch = "", branchName = "") =>
-    call<Meta>("CreateWorktree", agentId, repoDir, baseBranch, branchName),
+  createWorktree: (agentId: string, repoDir: string, baseBranch = "", branchName = "", detach = false) =>
+    call<Meta>("CreateWorktree", agentId, repoDir, baseBranch, branchName, detach),
   attachWorktree: (agentId: string, path: string) => call<Meta>("AttachWorktree", agentId, path),
   listWorktrees: (repoDir: string) => call<WorktreeInfo[]>("ListWorktrees", repoDir),
   worktreeStatus: (id: string) => call<WorktreeStatus>("WorktreeStatus", id),
@@ -50,7 +50,7 @@ export const api = {
     call<void>("MergeWorktree", id, strategy, commitMsg, cleanup),
   removeWorktree: (id: string, force = false, deleteBranch = false) =>
     call<void>("RemoveWorktree", id, force, deleteBranch),
-  removeWorktreeByPath: (wtPath: string, deleteBranch = true) =>
+  removeWorktreeByPath: (wtPath: string, deleteBranch = false) =>
     call<void>("RemoveWorktreeByPath", wtPath, deleteBranch),
   workspaceCreate: (cwd: string, relPath: string, isDir: boolean) =>
     call<void>("WorkspaceCreate", cwd, relPath, isDir),
@@ -83,6 +83,7 @@ export const api = {
   gitInfo: (path: string) => call<GitInfo>("GitInfo", path),
   gitCheckout: (path: string, branch: string) => call<GitInfo>("GitCheckout", path, branch),
   gitCreateBranch: (path: string, branch: string) => call<GitInfo>("GitCreateBranch", path, branch),
+  gitDeleteBranch: (path: string, branch: string, force = false) => call<GitInfo>("GitDeleteBranch", path, branch, force),
   pickFolder: () => call<string>("PickFolder"),
   reveal: (path: string) => call<void>("Reveal", path),
   openLink: (target: string, cwd: string) => call<void>("OpenLink", target, cwd),
