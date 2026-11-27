@@ -39,9 +39,11 @@ export const store = reactive({
   activeId: null as string | null,
   /** Working directory currently shown in the UI; new conversations start here. */
   currentCwd: localStorage.getItem("x-chat.cwd") || "",
+  /** Optional one-shot agent hint when opening NewChat from an existing conversation. */
+  preferredAgentId: "" as string,
   loading: {} as Record<string, boolean>,
   sidebarCollapsed: localStorage.getItem("x-chat.sidebar") === "0",
-  workspaceOpen: false,
+  workspaceOpen: localStorage.getItem("x-chat.workspaceOpen") === "1",
   workspaceTab: (localStorage.getItem("x-chat.workspaceTab") === "terminal" ? "terminal" : "files") as "files" | "terminal",
   workspaceWidth: Math.min(820, Math.max(340, Number(localStorage.getItem("x-chat.workspaceWidth")) || 480)),
   /** Pending file to open and highlight in the WorkspacePanel file tree. */
@@ -63,6 +65,8 @@ export const store = reactive({
   probeErrors: {} as Record<string, string>,
   agentUpdateProgress: null as AgentUpdateProgress | null,
   agentUpdateProgressById: {} as Record<string, AgentUpdateProgress>,
+  /** Live preview override while editing theme settings before saving. */
+  themePreview: null as { theme?: Settings["theme"]; themeBackground?: "acrylic" | "solid" } | null,
 });
 
 function captureModels(agentId: string | undefined, configOptions: ConfigOption[] | undefined) {
@@ -100,36 +104,9 @@ watch(
   () => store.sidebarCollapsed,
   (v) => localStorage.setItem("x-chat.sidebar", v ? "0" : "1"),
 );
-const workspaceOpenById: Record<string, boolean> = (() => {
-  try {
-    const raw = JSON.parse(localStorage.getItem("x-chat.workspaceOpenById") || "{}") as Record<string, unknown>;
-    const out: Record<string, boolean> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (v === true) out[k] = true;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-})();
-
-function saveWorkspaceOpenMap() {
-  try {
-    localStorage.setItem("x-chat.workspaceOpenById", JSON.stringify(workspaceOpenById));
-  } catch {
-    /* ignore quota errors */
-  }
-}
-
 watch(
   () => store.workspaceOpen,
-  (v) => {
-    const id = store.activeId;
-    if (!id) return;
-    if (v) workspaceOpenById[id] = true;
-    else delete workspaceOpenById[id];
-    saveWorkspaceOpenMap();
-  },
+  (v) => localStorage.setItem("x-chat.workspaceOpen", v ? "1" : "0"),
 );
 watch(
   () => store.workspaceTab,
@@ -233,7 +210,7 @@ let workspaceRevealSeq = 0;
 
 /** Opens a file inside the current workspace in the right-hand WorkspacePanel file tree. */
 export function openWorkspaceFile(target: string, cwd?: string): boolean {
-  const base = cwd ?? activeMeta.value?.cwd ?? "";
+  const base = cwd ?? activeWorkspaceCwd.value;
   const rel = resolveWorkspaceRelPath(target, base);
   if (!rel) return false;
   const segments = rel.split("/").filter(Boolean);
@@ -266,9 +243,13 @@ const systemDark = ref(media.matches);
 media.addEventListener("change", (e) => (systemDark.value = e.matches));
 
 export const isDark = computed(() => {
-  const t = store.settings?.theme ?? "system";
+  const t = store.themePreview?.theme ?? store.settings?.theme ?? "system";
   return t === "dark" || (t === "system" && systemDark.value);
 });
+
+export const themeBackground = computed<"acrylic" | "solid">(() =>
+  (store.themePreview?.themeBackground ?? store.settings?.themeBackground) === "solid" ? "solid" : "acrylic",
+);
 
 watch(
   isDark,
@@ -279,9 +260,20 @@ watch(
   { immediate: true },
 );
 
+watch(
+  themeBackground,
+  (bg) => {
+    document.documentElement.dataset.bg = bg;
+  },
+  { immediate: true },
+);
+
 // -------------------------------------------------------------- selectors
 
 export const activeMeta = computed(() => (store.activeId ? store.metas[store.activeId] ?? null : null));
+export const activeWorkspaceCwd = computed(
+  () => activeMeta.value?.cwd || store.currentCwd || store.settings?.recentDirs?.[0] || store.boot?.home || "",
+);
 export const activeLive = computed(() => (store.activeId ? store.lives[store.activeId] ?? idleLive() : idleLive()));
 export const activeTranscript = computed(() => (store.activeId ? store.transcripts[store.activeId] ?? null : null));
 
@@ -370,15 +362,10 @@ function onPush(p: Push) {
       delete store.queues[p.conversationId];
       delete store.drafts[p.conversationId];
       delete store.draftAttachments[p.conversationId];
-      if (workspaceOpenById[p.conversationId]) {
-        delete workspaceOpenById[p.conversationId];
-        saveWorkspaceOpenMap();
-      }
       steerPending.delete(p.conversationId);
       manualStop.delete(p.conversationId);
       if (store.activeId === p.conversationId) {
         store.activeId = null;
-        store.workspaceOpen = false;
       }
       return;
     case "focus":
@@ -419,11 +406,38 @@ async function reload() {
   else store.activeId = null;
 }
 
+const PUSH_UNSUB_KEY = Symbol.for("x-chat.pushUnsub");
+
+function clearPushSubscription() {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const prev = g[PUSH_UNSUB_KEY];
+  if (typeof prev === "function") {
+    try {
+      (prev as () => void)();
+    } catch {
+      /* ignore teardown errors */
+    }
+    delete g[PUSH_UNSUB_KEY];
+  }
+}
+
+export function dispose() {
+  clearPushSubscription();
+}
+
 export function init(): () => void {
   initNotifications();
-  const unsubscribe = subscribe(onPush, () => void reload().catch(() => {}));
+  clearPushSubscription();
+  const unsub = subscribe(onPush, () => void reload().catch(() => {}));
+  (globalThis as Record<PropertyKey, unknown>)[PUSH_UNSUB_KEY] = unsub;
   void loadInitialState();
-  return unsubscribe;
+  return clearPushSubscription;
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    clearPushSubscription();
+  });
 }
 
 async function loadInitialState() {
@@ -510,7 +524,6 @@ async function load(id: string) {
 
 export async function select(id: string | null) {
   store.activeId = id;
-  store.workspaceOpen = id ? Boolean(workspaceOpenById[id]) : false;
   if (id) {
     localStorage.setItem("x-chat.active", id);
     if (store.turnOutcome[id] === "unseen") store.turnOutcome[id] = "done";
@@ -524,6 +537,12 @@ export async function select(id: string | null) {
 }
 
 export function newConversation() {
+  void select(null);
+}
+
+export function newConversationInDir(dir: string, agentId?: string) {
+  if (dir) store.currentCwd = dir;
+  if (agentId) store.preferredAgentId = agentId;
   void select(null);
 }
 
@@ -599,11 +618,17 @@ function isPiAgent(agentId: string): boolean {
   return id === "pi" || id === "omp" || id.includes("oh-my-pi");
 }
 
-interface WorktreeLaunchOptions {
+export interface WorktreeLaunchOptions {
   enabled: boolean;
   baseBranch?: string;
   branchName?: string;
   existingPath?: string;
+}
+
+const startingIds = new Set<string>();
+
+export function isStarting(id: string | undefined): boolean {
+  return Boolean(id && startingIds.has(id));
 }
 
 export async function start(
@@ -616,32 +641,44 @@ export async function start(
   const meta = worktree?.enabled
     ? worktree.existingPath
       ? await api.attachWorktree(agentId, worktree.existingPath)
-      : await api.createWorktree(agentId, cwd, worktree.baseBranch, worktree.branchName)
+      : await api.createWorktree(agentId, cwd, worktree.baseBranch ?? "", worktree.branchName ?? "")
     : await api.create(agentId, cwd);
-  store.metas[meta.id] = meta;
-  store.transcripts[meta.id] = emptyTranscript();
-  store.lives[meta.id] = { ...idleLive(), status: "connecting" };
-  await select(meta.id);
-  if (blocks.length || (initialModel?.configId && initialModel.value)) {
-    try {
-      const live = await api.connect(meta.id);
-      if (initialModel?.configId && initialModel.value) {
-        await api.setConfig(meta.id, initialModel.configId, initialModel.value).catch(() => {});
-      }
-      if (!isPiAgent(agentId)) {
-        const target = resolvePermissionTarget(currentPermissionMode(), live);
-        if (target?.kind === "mode") {
-          await api.setMode(meta.id, target.modeId).catch(() => {});
-        } else if (target?.kind === "config") {
-          await api.setConfig(meta.id, target.configId, target.value).catch(() => {});
-        }
-      }
-    } catch {
-      /* fall back to agent defaults if pre-connect fails */
+  startingIds.add(meta.id);
+  try {
+    if (!store.metas[meta.id]) store.metas[meta.id] = meta;
+    if (!store.transcripts[meta.id]) store.transcripts[meta.id] = emptyTranscript();
+    const existingLive = store.lives[meta.id];
+    if (!existingLive || existingLive.status === "idle") {
+      store.lives[meta.id] = { ...idleLive(), status: "connecting" };
     }
+    await select(meta.id);
+    if (blocks.length || (initialModel?.configId && initialModel.value)) {
+      try {
+        const live = await api.connect(meta.id);
+        if (store.lives[meta.id]?.status !== "running") {
+          store.lives[meta.id] = live;
+          captureModels(meta.agentId, live.configOptions);
+        }
+        if (initialModel?.configId && initialModel.value) {
+          await api.setConfig(meta.id, initialModel.configId, initialModel.value).catch(() => {});
+        }
+        if (!isPiAgent(agentId)) {
+          const target = resolvePermissionTarget(currentPermissionMode(), live);
+          if (target?.kind === "mode") {
+            await api.setMode(meta.id, target.modeId).catch(() => {});
+          } else if (target?.kind === "config") {
+            await api.setConfig(meta.id, target.configId, target.value).catch(() => {});
+          }
+        }
+      } catch {
+        /* fall back to agent defaults if pre-connect fails */
+      }
+    }
+    if (blocks.length) await send(meta.id, blocks);
+    return meta;
+  } finally {
+    startingIds.delete(meta.id);
   }
-  if (blocks.length) await send(meta.id, blocks);
-  return meta;
 }
 
 const steerPending = new Set<string>();
@@ -729,7 +766,7 @@ export const respond = (id: string, requestId: string, optionId: string) => api.
 export const setMode = (id: string, modeId: string) => api.setMode(id, modeId);
 export const setConfig = (id: string, configId: string, value: string | boolean) => api.setConfig(id, configId, value);
 export const connect = (id: string) => api.connect(id);
-export const { listWorktrees, worktreeStatus, mergeWorktree, removeWorktree } = api;
+export const { listWorktrees, worktreeStatus, mergeWorktree, removeWorktree, removeWorktreeByPath } = api;
 
 export async function rename(id: string, title: string) {
   store.metas[id] = await api.rename(id, title);

@@ -150,11 +150,11 @@ func (a *API) AttachWorktree(ctx context.Context, agentID, path string) (Meta, e
 }
 
 func (a *API) ListWorktrees(ctx context.Context, repoDir string) ([]WorktreeInfo, error) {
-	return a.h.listWorktrees(ctx, repoDir)
+	return a.h.listWorktrees(context.WithoutCancel(ctx), repoDir)
 }
 
 func (a *API) WorktreeStatus(ctx context.Context, id string) (WorktreeStatus, error) {
-	return a.h.worktreeStatus(ctx, id)
+	return a.h.worktreeStatus(context.WithoutCancel(ctx), id)
 }
 
 func (a *API) MergeWorktree(ctx context.Context, id, strategy, commitMsg string, cleanup bool) error {
@@ -163,6 +163,11 @@ func (a *API) MergeWorktree(ctx context.Context, id, strategy, commitMsg string,
 
 func (a *API) RemoveWorktree(ctx context.Context, id string, force, deleteBranch bool) error {
 	return a.h.removeWorktree(context.WithoutCancel(ctx), id, force, deleteBranch)
+}
+
+// RemoveWorktreeByPath removes any linked git worktree directly by its directory path.
+func (a *API) RemoveWorktreeByPath(ctx context.Context, wtPath string, deleteBranch bool) error {
+	return a.h.removeWorktreeByPath(context.WithoutCancel(ctx), wtPath, deleteBranch)
 }
 
 // Open returns a conversation's transcript and live state.
@@ -328,6 +333,11 @@ func (a *API) GitInfo(ctx context.Context, path string) (GitInfo, error) {
 // GitCheckout switches the git repository at path to branch and returns updated info.
 func (a *API) GitCheckout(ctx context.Context, path, branch string) (GitInfo, error) {
 	return a.h.gitCheckout(ctx, path, branch)
+}
+
+// GitCreateBranch creates a new local branch at HEAD in path, checks it out, and returns updated info.
+func (a *API) GitCreateBranch(ctx context.Context, path, branch string) (GitInfo, error) {
+	return a.h.gitCreateBranch(ctx, path, branch)
 }
 
 // PickFolder shows the system's folder dialog; "" when canceled or unavailable.

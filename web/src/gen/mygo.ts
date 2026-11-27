@@ -243,6 +243,8 @@ export interface Push {
 export interface Settings {
   /** system | light | dark */
   theme: string;
+  /** acrylic | solid */
+  themeBackground?: string;
   /** enter | modEnter */
   sendKey: string;
   /** answer permission requests with "allow once" */
@@ -358,6 +360,8 @@ export const Host = {
   delete: bind<[string], void>("Host.Delete", (id: string) => [id]),
   /** GitCheckout switches the git repository at path to branch and returns updated info. */
   gitCheckout: bind<[string, string], GitInfo>("Host.GitCheckout", (path: string, branch: string) => [path, branch]),
+  /** GitCreateBranch creates a new local branch at HEAD in path, checks it out, and returns updated info. */
+  gitCreateBranch: bind<[string, string], GitInfo>("Host.GitCreateBranch", (path: string, branch: string) => [path, branch]),
   /** GitInfo returns the current git branch and local branches for path. */
   gitInfo: bind<[string], GitInfo>("Host.GitInfo", (path: string) => [path]),
   /**
@@ -396,6 +400,8 @@ export const Host = {
    */
   refreshModels: bind<[string, string], unknown[]>("Host.RefreshModels", (agentID: string, cwd: string) => [agentID, cwd]),
   removeWorktree: bind<[string, boolean, boolean], void>("Host.RemoveWorktree", (id: string, force: boolean, deleteBranch: boolean) => [id, force, deleteBranch]),
+  /** RemoveWorktreeByPath removes any linked git worktree directly by its directory path. */
+  removeWorktreeByPath: bind<[string, boolean], void>("Host.RemoveWorktreeByPath", (wtPath: string, deleteBranch: boolean) => [wtPath, deleteBranch]),
   /** Rename sets a conversation's title; agents no longer retitle it. */
   rename: bind<[string, string], Meta>("Host.Rename", (id: string, title: string) => [id, title]),
   /** Respond answers a permission request; an empty optionID dismisses it. */

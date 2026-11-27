@@ -7,11 +7,12 @@ import AppSidebar from "./components/AppSidebar.vue";
 import ChatView from "./components/ChatView.vue";
 import NewChat from "./components/NewChat.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
+import WorkspacePanel from "./components/WorkspacePanel.vue";
 import { api, inApp } from "./api";
-import { activeMeta, init, isDark, newConversation, openWorkspaceFile, store } from "./store";
+import { activeWorkspaceCwd, init, isDark, newConversation, openWorkspaceFile, store, themeBackground } from "./store";
 import { antdThemeFor } from "./theme";
 
-const theme = computed(() => antdThemeFor(isDark.value));
+const theme = computed(() => antdThemeFor(isDark.value, themeBackground.value === "solid"));
 const textAreaConfig = { changeOnComposing: true };
 
 const mod = navigator.platform.includes("Mac") ? (e: KeyboardEvent) => e.metaKey : (e: KeyboardEvent) => e.ctrlKey;
@@ -31,7 +32,7 @@ function onKey(e: KeyboardEvent) {
     store.sidebarCollapsed = !store.sidebarCollapsed;
   } else if (key === "j") {
     e.preventDefault();
-    if (store.activeId) store.workspaceOpen = !store.workspaceOpen;
+    store.workspaceOpen = !store.workspaceOpen;
   } else if (key === ",") {
     e.preventDefault();
     store.settingsOpen = true;
@@ -115,7 +116,7 @@ function onLinkClick(e: MouseEvent) {
   const anchor = e.target instanceof Element ? e.target.closest("a[href]") : null;
   const href = anchor?.getAttribute("href") ?? "";
   if (!href || href.startsWith("#")) return;
-  const cwd = activeMeta.value?.cwd ?? "";
+  const cwd = activeWorkspaceCwd.value;
   if (cwd && openWorkspaceFile(href, cwd)) {
     e.preventDefault();
     e.stopPropagation();
@@ -154,7 +155,7 @@ onBeforeUnmount(() => {
         <AntApp>
           <div class="flex h-100dvh overflow-hidden relative bg-bg" @contextmenu="onContextMenu">
             <!-- Subtle Beacon-style ambient light layer refracted through acrylic panels -->
-            <div class="fixed inset-0 pointer-events-none overflow-hidden z-0" aria-hidden="true">
+            <div v-if="themeBackground !== 'solid'" class="fixed inset-0 pointer-events-none overflow-hidden z-0" aria-hidden="true">
               <span
                 class="absolute rounded-full blur-[95px] will-change-transform w-[560px] h-[560px] -top-[180px] -left-[100px]"
                 :class="isDark ? 'bg-[rgba(56,139,253,0.14)]' : 'bg-[rgba(125,179,255,0.32)]'"
@@ -194,9 +195,16 @@ onBeforeUnmount(() => {
               >
                 <AppSidebar />
               </div>
-              <main class="flex-1 min-w-0 flex flex-col relative z-1 bg-transparent">
-                <ChatView v-if="store.activeId && store.metas[store.activeId]" />
-                <NewChat v-else />
+              <main class="flex-1 min-w-0 flex relative z-1 bg-transparent">
+                <div class="flex-1 min-w-0 flex flex-col h-full min-h-0">
+                  <ChatView v-if="store.activeId && store.metas[store.activeId]" />
+                  <NewChat v-else />
+                </div>
+                <WorkspacePanel
+                  :open="store.workspaceOpen"
+                  :cwd="activeWorkspaceCwd"
+                  @close="store.workspaceOpen = false"
+                />
               </main>
               <SettingsDialog v-model:open="store.settingsOpen" />
             </template>

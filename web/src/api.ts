@@ -50,6 +50,8 @@ export const api = {
     call<void>("MergeWorktree", id, strategy, commitMsg, cleanup),
   removeWorktree: (id: string, force = false, deleteBranch = false) =>
     call<void>("RemoveWorktree", id, force, deleteBranch),
+  removeWorktreeByPath: (wtPath: string, deleteBranch = true) =>
+    call<void>("RemoveWorktreeByPath", wtPath, deleteBranch),
   workspaceCreate: (cwd: string, relPath: string, isDir: boolean) =>
     call<void>("WorkspaceCreate", cwd, relPath, isDir),
   workspaceRename: (cwd: string, oldRelPath: string, newRelPath: string) =>
@@ -80,6 +82,7 @@ export const api = {
   listSkills: (cwd: string) => call<SkillInfo[]>("ListSkills", cwd),
   gitInfo: (path: string) => call<GitInfo>("GitInfo", path),
   gitCheckout: (path: string, branch: string) => call<GitInfo>("GitCheckout", path, branch),
+  gitCreateBranch: (path: string, branch: string) => call<GitInfo>("GitCreateBranch", path, branch),
   pickFolder: () => call<string>("PickFolder"),
   reveal: (path: string) => call<void>("Reveal", path),
   openLink: (target: string, cwd: string) => call<void>("OpenLink", target, cwd),

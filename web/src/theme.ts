@@ -6,7 +6,7 @@ const font =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", sans-serif';
 export const mono = '"SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace';
 
-export function antdThemeFor(dark: boolean) {
+export function antdThemeFor(dark: boolean, solid = false) {
   return {
     algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
@@ -15,10 +15,22 @@ export function antdThemeFor(dark: boolean) {
       colorSuccess: dark ? "#34d399" : "#16a34a",
       colorWarning: dark ? "#fbbf24" : "#d97706",
       colorError: dark ? "#f87171" : "#dc2626",
-      colorBgBase: dark ? "#0e1016" : "#f4f6fa",
+      colorBgBase: solid ? (dark ? "#111215" : "#ffffff") : dark ? "#0e1016" : "#f4f6fa",
       colorBgLayout: "transparent",
-      colorBgContainer: dark ? "rgba(24, 27, 36, 0.72)" : "rgba(255, 255, 255, 0.76)",
-      colorBgElevated: dark ? "rgba(26, 30, 40, 0.84)" : "rgba(255, 255, 255, 0.86)",
+      colorBgContainer: solid
+        ? dark
+          ? "#181a20"
+          : "#ffffff"
+        : dark
+          ? "rgba(24, 27, 36, 0.72)"
+          : "rgba(255, 255, 255, 0.76)",
+      colorBgElevated: solid
+        ? dark
+          ? "#1e2128"
+          : "#ffffff"
+        : dark
+          ? "rgba(26, 30, 40, 0.84)"
+          : "rgba(255, 255, 255, 0.86)",
       colorBorder: dark ? "rgba(255, 255, 255, 0.11)" : "rgba(15, 23, 42, 0.09)",
       colorBorderSecondary: dark ? "rgba(255, 255, 255, 0.07)" : "rgba(15, 23, 42, 0.06)",
       colorText: dark ? "#f1f4f9" : "#111318",
@@ -47,7 +59,19 @@ export function antdThemeFor(dark: boolean) {
         dangerShadow: "none",
         primaryColor: dark ? "#0e1016" : "#ffffff",
       },
+      Checkbox: {
+        borderRadiusSM: 4,
+        colorWhite: dark ? "#0b0d13" : "#ffffff",
+        colorBorder: dark ? "rgba(255, 255, 255, 0.24)" : "rgba(15, 23, 42, 0.24)",
+        colorBgContainer: "transparent",
+      },
       Select: { optionSelectedFontWeight: 520 },
+      Input: {
+        hoverBorderColor: dark ? "rgba(255, 255, 255, 0.22)" : "rgba(15, 23, 42, 0.22)",
+        activeBorderColor: dark ? "rgba(255, 255, 255, 0.34)" : "rgba(15, 23, 42, 0.34)",
+        activeShadow: dark ? "0 0 0 3px rgba(255, 255, 255, 0.08)" : "0 0 0 3px rgba(15, 23, 42, 0.07)",
+        activeBg: dark ? "rgba(30, 34, 46, 0.92)" : "#ffffff",
+      },
       Modal: {
         titleFontSize: 15,
         contentBg: dark ? "#161922" : "#ffffff",
